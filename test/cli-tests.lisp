@@ -181,21 +181,35 @@
       (is (search "x-from: curlcl" (string-downcase output))))))
 
 (test the-driver-runs-transfers-in-parallel
+  ;; Timed against the sequential run rather than a fixed threshold.  A wall
+  ;; clock bound has to be tight enough to prove overlap and loose enough to
+  ;; survive a loaded shared runner, and there is no such number -- an earlier
+  ;; version asserting "under 0.6s" passed locally and failed in CI.  Comparing
+  ;; the two runs in the same conditions is self-calibrating.
   (with-curlcl-or-skip
-    ;; Four ~200ms transfers; -Z should overlap them.
-    (let* ((url (test-url "/drip?n=4&ms=50"))
-           (start (get-internal-real-time))
-           (code (nth-value 1 (run-program-capturing
-                               (native-namestring-of *curlcl-binary*)
-                               (list "-s" "-Z" "-o" "/dev/null" "-o" "/dev/null"
-                                     "-o" "/dev/null" "-o" "/dev/null"
-                                     url url url url))))
-           (elapsed (/ (- (get-internal-real-time) start)
-                       internal-time-units-per-second 1.0)))
-      (is (= 0 code))
-      (is (< elapsed 0.6)
-          "four 0.2s transfers took ~,2Fs with -Z; they did not overlap"
-          elapsed))))
+    (let ((url (test-url "/drip?n=4&ms=50")))
+      (flet ((timed (&rest arguments)
+               (let ((start (get-internal-real-time)))
+                 (let ((code (nth-value 1 (run-program-capturing
+                                           (native-namestring-of *curlcl-binary*)
+                                           arguments))))
+                   (values (/ (- (get-internal-real-time) start)
+                              internal-time-units-per-second 1.0)
+                           code)))))
+        (multiple-value-bind (sequential sequential-code)
+            (timed "-s" "-o" "/dev/null" "-o" "/dev/null"
+                   "-o" "/dev/null" "-o" "/dev/null" url url url url)
+          (multiple-value-bind (parallel parallel-code)
+              (timed "-s" "-Z" "-o" "/dev/null" "-o" "/dev/null"
+                     "-o" "/dev/null" "-o" "/dev/null" url url url url)
+            (is (= 0 sequential-code))
+            (is (= 0 parallel-code))
+            ;; Four overlapping 0.2s transfers should beat four consecutive
+            ;; ones by a wide margin; half is conservative enough that only a
+            ;; genuine loss of overlap fails it.
+            (is (< parallel (* 0.7 sequential))
+                "parallel took ~,2Fs against ~,2Fs sequential; they did not overlap"
+                parallel sequential)))))))
 
 (test the-driver-agrees-with-curl-where-curl-is-available
   ;; The comparison that matters: same URL, same body.  Skipped when there is
