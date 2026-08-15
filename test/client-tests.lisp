@@ -781,3 +781,13 @@ reporting progress" (- latest earliest))))))
       (is (< 350 (length (remove-duplicates all :test #'=)))
           "only ~D distinct delays from 400 draws"
           (length (remove-duplicates all :test #'=))))))
+
+(test the-jitter-state-is-reseeded-on-image-restore
+  ;; Seeded once at load time it would be dumped into an executable, so every
+  ;; process started from that binary would draw the identical backoff
+  ;; sequence -- the same fleet-wide lockstep jitter exists to prevent.
+  (let ((before (loop repeat 5 collect (libcurl::jitter-factor))))
+    (libcurl::%reseed-jitter)
+    (let ((after (loop repeat 5 collect (libcurl::jitter-factor))))
+      (is (not (equal before after))
+          "reseeding produced the same sequence"))))

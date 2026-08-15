@@ -264,6 +264,7 @@
    #:*retryable-codes*
    #:*retryable-statuses*
    #:*idempotent-methods*
+   #:*jitter-random-state*
 
    ;; Sessions: pooled handles over a share, so connections, DNS answers, TLS
    ;; sessions and cookies are common to a run of requests.

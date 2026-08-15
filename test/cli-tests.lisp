@@ -278,3 +278,55 @@
             (is (= 40000 (file-length in))))
           (with-open-file (in b :element-type '(unsigned-byte 8))
             (is (= 40000 (file-length in)))))))))
+
+(test fail-still-expands-write-out
+  ;; curl runs --write-out whatever the transfer did: `curl -f -w %{http_code}'
+  ;; prints 404 and exits 22.  Routing --fail through CURLOPT_FAILONERROR
+  ;; destroyed the response, so there was nothing left to expand from and a
+  ;; common scripting idiom printed nothing.
+  (with-curlcl-or-skip
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" "-f" "-w" "%{http_code}"
+                                     (test-url "/status/404")))
+      (is (= 22 code))
+      (is (string= "404" output)))))
+
+(test fail-still-allows-retrying-a-retryable-status
+  ;; And it must not disable --retry.  Under FAILONERROR a 503 arrived as a
+  ;; condition whose code is not retryable, so exactly one request was made.
+  (with-curlcl-or-skip
+    (reset-flaky "cli-fail-retry")
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" "-f" "--retry" "5" "--retry-delay" "0"
+                                     (test-url "/flaky?id=cli-fail-retry&fail=2")))
+      (is (= 0 code) "--fail stopped --retry from retrying")
+      (is (search "succeeded on attempt 3" output)))))
+
+(test fail-suppresses-headers-as-well-as-the-body
+  ;; "no output at all" includes the headers -i would otherwise print.
+  (with-curlcl-or-skip
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" "-f" "-i" (test-url "/status/404")))
+      (is (= 22 code))
+      (is (string= "" output)))))
+
+(test fail-catches-a-401-that-failonerror-lets-slip
+  ;; libcurl documents CURLOPT_FAILONERROR as not fail-safe, 401 and 407 in
+  ;; particular when authentication is involved.  Watching the status line has
+  ;; no such gap.
+  (with-curlcl-or-skip
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" "-f" (test-url "/auth/basic")))
+      (is (= 22 code))
+      (is (string= "" output)))))
+
+(test status-lines-are-recognised
+  (is (= 404 (libcurl/cli::parse-status-line "HTTP/1.1 404 Not Found")))
+  (is (= 200 (libcurl/cli::parse-status-line "HTTP/2 200")))
+  ;; An ordinary header is not a status line.
+  (is (null (libcurl/cli::parse-status-line "Content-Type: text/plain")))
+  (is (null (libcurl/cli::parse-status-line ""))))

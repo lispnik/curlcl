@@ -206,11 +206,7 @@ Accepts curl's forms: name=value, name=@path, and a ;type= suffix on either."
     (append
      (list :method method
            :follow-redirects (and (clingon:getopt command :location) t)
-           :verbose (and (clingon:getopt command :verbose) t)
-           ;; Delegated to libcurl rather than checked afterwards: by the time
-           ;; a status is in hand the body has already gone to the output, and
-           ;; --fail promises no output at all.
-           :fail-on-error (and (clingon:getopt command :fail) t))
+           :verbose (and (clingon:getopt command :verbose) t))
      (when (clingon:getopt command :header)
        (list :headers (clingon:getopt command :header)))
      ;; -G moves the data into the query string instead of the body.
@@ -276,17 +272,22 @@ Accepts curl's forms: name=value, name=@path, and a ;type= suffix on either."
       2))
 
 (defun report-response (command response)
-  "Do the after-the-fact part: --write-out.  Returns an exit code.
+  "Do the after-the-fact parts: --write-out, then --fail.  Returns an exit code.
 
---fail is not handled here.  It is CURLOPT_FAILONERROR, so a failing status
-never produces a RESPONSE at all -- it arrives as a condition carrying
-CURLE_HTTP_RETURNED_ERROR, and EXIT-CODE-FOR turns that into curl's 22."
-  (declare (ignorable command))
+--write-out runs first and runs regardless, because curl expands it whatever
+the transfer did -- `curl -f -w %{http_code}' prints 404 and exits 22, and a
+script relying on that would otherwise get silence."
   (let ((format (clingon:getopt command :write-out)))
     (when format
       (write-string (expand-write-out format response) *standard-output*)
       (finish-output *standard-output*)))
-  0)
+  (let ((status (libcurl:response-status response)))
+    (cond ((and (clingon:getopt command :fail) (<= 400 status))
+           (unless (clingon:getopt command :silent)
+             (message "The requested URL returned error: ~D" status))
+           ;; CURLE_HTTP_RETURNED_ERROR, which is what curl --fail exits with.
+           22)
+          (t 0))))
 
 (defmacro with-output ((stream command url index) &body body)
   "Bind STREAM to where this URL's body should go, closing it if it is a file."
@@ -303,13 +304,43 @@ CURLE_HTTP_RETURNED_ERROR, and EXIT-CODE-FOR turns that into curl's 22."
              (unwind-protect (progn ,@body)
                (finish-output ,stream)))))))
 
-(defun header-writer (command stream)
-  "A header callback that writes header lines to STREAM, for --include."
-  (when (or (clingon:getopt command :include) (clingon:getopt command :head))
-    (lambda (line)
-      (write-sequence (libcurl::coerce-to-octets (format nil "~A~C~C" line
-                                                         #\Return #\Newline))
-                      stream))))
+(defun parse-status-line (line)
+  "The status code from an HTTP status line, or NIL if that is not one."
+  (when (eql 0 (search "HTTP/" line))
+    (let ((space (position #\Space line)))
+      (when space (parse-integer line :start (1+ space) :junk-allowed t)))))
+
+(defun make-sinks (command stream)
+  "Header and body callbacks for one transfer.  Returns (values header data status).
+
+STATUS is a cons whose car tracks the most recent response code, so --fail can
+suppress output from the status line onward.
+
+Doing the suppression here rather than with CURLOPT_FAILONERROR is deliberate.
+Letting libcurl abort does keep the body out of the output, but it destroys
+everything else --fail is expected to coexist with: there is no response left
+to expand --write-out from, and no HTTP status for --retry to judge, so
+`-f -w' printed nothing and `-f --retry' stopped retrying.  libcurl's own
+documentation also warns that FAILONERROR is not fail-safe -- 401 and 407 slip
+through when authentication is involved -- and it has nothing to say about
+non-HTTP URLs.  Watching the status line covers all of those the same way."
+  (let ((status (cons 0 nil))
+        (failing (clingon:getopt command :fail))
+        (include (or (clingon:getopt command :include)
+                     (clingon:getopt command :head))))
+    (flet ((suppressed-p () (and failing (<= 400 (car status)))))
+      (values
+       (lambda (line)
+         (let ((code (parse-status-line line)))
+           (when code (setf (car status) code)))
+         (when (and include (not (suppressed-p)))
+           (write-sequence (libcurl::coerce-to-octets
+                            (format nil "~A~C~C" line #\Return #\Newline))
+                           stream)))
+       (lambda (octets)
+         (unless (suppressed-p)
+           (write-sequence octets stream)))
+       status))))
 
 (defun progress-reporter (command)
   "A progress callback for --progress-bar, or NIL."
@@ -339,15 +370,16 @@ CURLE_HTTP_RETURNED_ERROR, and EXIT-CODE-FOR turns that into curl's 22."
                                        (collect-data command))
                                   (append-query url (collect-data command))
                                   url))
-               (progress (progress-reporter command))
-               (response (apply #'libcurl:request effective-url
-                                :output stream
-                                :on-header (header-writer command stream)
-                                (append
-                                 (when progress (list :on-progress progress))
-                                 options))))
-          (when progress (format *error-output* "~%"))
-          (report-response command response)))
+               (progress (progress-reporter command)))
+          (multiple-value-bind (on-header on-data) (make-sinks command stream)
+           (let ((response (apply #'libcurl:request effective-url
+                                  :on-data on-data
+                                  :on-header on-header
+                                  (append
+                                   (when progress (list :on-progress progress))
+                                   options))))
+             (when progress (format *error-output* "~%"))
+             (report-response command response)))))
     (libcurl:curl-error (condition)
       (unless (and (clingon:getopt command :silent)
                    (not (clingon:getopt command :show-error)))
@@ -371,9 +403,11 @@ CURLE_HTTP_RETURNED_ERROR, and EXIT-CODE-FOR turns that into curl's 22."
                                                         :if-does-not-exist :create)
                                                   (binary-stdout))))
                                  (push (cons stream (and destination t)) streams)
-                                 (list* url :output stream
-                                        :on-header (header-writer command stream)
-                                        (request-options command))))))
+                                 (multiple-value-bind (on-header on-data)
+                                     (make-sinks command stream)
+                                   (list* url :on-data on-data
+                                          :on-header on-header
+                                          (request-options command)))))))
            (loop for outcome in (libcurl:request-many
                                  requests
                                  :max-connections
@@ -386,13 +420,26 @@ CURLE_HTTP_RETURNED_ERROR, and EXIT-CODE-FOR turns that into curl's 22."
                                         (message "~A: ~A" url outcome))
                                       (exit-code-for outcome)))))
                       (when (plusp code) (setf worst code))))
+           ;; Flushing and closing can fail -- a full disk, a quota, EPIPE --
+           ;; and that failure loses data, so it has to reach the exit code
+           ;; rather than vanish into IGNORE-ERRORS.  The single-transfer path
+           ;; gets this for free from WITH-OPEN-FILE, whose close error
+           ;; propagates; this one has to do it by hand.
+           (dolist (entry streams)
+             (destructuring-bind (stream . ours) entry
+               (handler-case (progn (finish-output stream)
+                                    (when ours (close stream)))
+                 (error (condition)
+                   (unless (clingon:getopt command :silent)
+                     (message "~A" condition))
+                   ;; CURLE_WRITE_ERROR, as curl reports for a failed write.
+                   (setf worst 23)))))
+           (setf streams '())
            worst)
-      ;; Flush everything, then close the files this opened.  A stream on
-      ;; standard output is not ours to close, so it is only flushed.
+      ;; Only reached on a non-local exit; the normal path closed them above.
       (dolist (entry streams)
-        (destructuring-bind (stream . ours) entry
-          (ignore-errors (finish-output stream))
-          (when ours (ignore-errors (close stream))))))))
+        (ignore-errors (finish-output (car entry)))
+        (when (cdr entry) (ignore-errors (close (car entry))))))))
 
 ;;; The command ---------------------------------------------------------------
 

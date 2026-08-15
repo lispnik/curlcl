@@ -377,7 +377,11 @@ Only transport failures signal.
   :RETRY        an attempt count, a plist, or a RETRY-POLICY
   :SESSION      a SESSION whose connections and cookies to reuse
   :FAIL-ON-ERROR  abort on a >= 400 status and deliver no body, signalling
-                :HTTP-RETURNED-ERROR -- curl's --fail
+                :HTTP-RETURNED-ERROR.  Note this suppresses the RESPONSE
+                entirely, so it does not combine with :RETRY -- a retryable
+                503 arrives as a condition whose code is not in
+                *RETRYABLE-CODES*, and no retry happens.  To have both, leave
+                this off and inspect RESPONSE-STATUS yourself
   :VERIFY-SSL   :NONE disables certificate checking; do not
 
 Streaming is via :OUTPUT or :ON-DATA.  There is no lazy body stream, because

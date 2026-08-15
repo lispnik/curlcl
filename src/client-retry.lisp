@@ -53,9 +53,19 @@ duplicates an effect.  :RETRY-NON-IDEMPOTENT overrides this.")
 SBCL does not guarantee the global *RANDOM-STATE* is safe against concurrent
 use, and the failure mode is precisely the one jitter exists to prevent:
 several threads backing off together would draw correlated delays and retry in
-lockstep.")
+lockstep.
+
+Reseeded on image restore.  Seeded once at load time it would be baked into a
+dumped executable, so every process started from that binary -- and every copy
+of it on a fleet -- would draw the identical backoff sequence, which is the
+same lockstep by another route.")
 
 (defvar *jitter-lock* (bt:make-lock "libcurl retry jitter"))
+
+(defun %reseed-jitter ()
+  (setf *jitter-random-state* (make-random-state t)))
+
+(uiop:register-image-restore-hook '%reseed-jitter nil)
 
 (defun jitter-factor ()
   "A value in [-1, 1), drawn under a lock from a private random state."
