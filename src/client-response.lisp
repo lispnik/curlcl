@@ -28,7 +28,14 @@
    (timings :initarg :timings :initform '() :reader response-timings
             :documentation "A plist of microsecond timings from getinfo.")
    (redirect-count :initarg :redirect-count :initform 0
-                   :reader response-redirect-count))
+                   :reader response-redirect-count)
+   ;; Taken from getinfo rather than measured from BODY, because with :OUTPUT
+   ;; or :ON-DATA the body was streamed past us and never buffered -- so the
+   ;; body's length is zero however many bytes actually arrived.
+   (size-download :initarg :size-download :initform 0
+                  :reader response-size-download)
+   (size-upload :initarg :size-upload :initform 0
+                :reader response-size-upload))
   (:documentation "A completed HTTP response."))
 
 (defmethod print-object ((response response) stream)
@@ -195,4 +202,10 @@ resets and reuses handles immediately."
                    :timings (collect-timings handle)
                    :redirect-count (or (ignore-errors
                                         (getinfo handle :redirect-count))
-                                       0))))
+                                       0)
+                   :size-download (or (ignore-errors
+                                       (getinfo handle :size-download-t))
+                                      0)
+                   :size-upload (or (ignore-errors
+                                     (getinfo handle :size-upload-t))
+                                    0))))

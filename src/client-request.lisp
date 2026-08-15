@@ -163,12 +163,12 @@ accumulated, which is what makes a large download not have to fit in memory."
 (defun configure-request (handle url &key (method :get) headers content multipart
                                           timeout connect-timeout
                                           (follow-redirects t) max-redirects
-                                          user-agent accept-encoding
+                                          user-agent (accept-encoding "")
                                           basic-auth bearer-auth
                                           cookie-jar cookies
                                           proxy verify-ssl ca-file verbose
                                           http-version range referer
-                                          output on-data on-header)
+                                          output on-data on-header on-progress)
   "Apply every request option to HANDLE.  Returns the body-collecting closure."
   (setopt handle :url url)
   (apply-method handle method)
@@ -189,8 +189,12 @@ accumulated, which is what makes a large download not have to fit in memory."
   (setopt handle :connecttimeout (or connect-timeout *default-connect-timeout*))
   (setopt handle :useragent (or user-agent *default-user-agent*))
   ;; An empty string means "every encoding this libcurl was built with", and
-  ;; libcurl transparently decompresses the result.
-  (setopt handle :accept-encoding (or accept-encoding ""))
+  ;; libcurl transparently decompresses the result -- the right default for a
+  ;; library.  An explicit NIL means send no Accept-Encoding at all, which is
+  ;; what curl does unless asked, and is the only way to ask for an
+  ;; undecompressed body.
+  (when accept-encoding
+    (setopt handle :accept-encoding accept-encoding))
   (when follow-redirects
     (setopt handle :followlocation t)
     (setopt handle :maxredirs (or max-redirects 30)))
@@ -234,6 +238,10 @@ accumulated, which is what makes a large download not have to fit in memory."
                                                  (format nil "~A=~A" (car pair)
                                                          (cdr pair)))
                                                cookies)))))
+  (when on-progress
+    ;; libcurl suppresses progress callbacks unless asked, so both go together.
+    (setopt handle :noprogress nil)
+    (setf (callback-function handle :progress) on-progress))
   (when on-header
     (setf (callback-function handle :header)
           (lambda (octets)
@@ -250,7 +258,7 @@ accumulated, which is what makes a large download not have to fit in memory."
                      user-agent accept-encoding basic-auth bearer-auth
                      cookie-jar cookies proxy verify-ssl ca-file verbose
                      http-version range referer
-                     output on-data on-header on-retry
+                     output on-data on-header on-progress on-retry
                      force-binary force-string
                      retry session)
   "Perform an HTTP request and return a RESPONSE.
@@ -269,6 +277,7 @@ Only transport failures signal.
   :OUTPUT       a stream to write the body to as it arrives
   :ON-DATA      a function called with each chunk, instead of accumulating
   :ON-HEADER    a function called with each response header line
+  :ON-PROGRESS  a function called with (dltotal dlnow ultotal ulnow)
   :RETRY        an attempt count, a plist, or a RETRY-POLICY
   :SESSION      a SESSION whose connections and cookies to reuse
   :VERIFY-SSL   :NONE disables certificate checking; do not
@@ -281,7 +290,7 @@ buffer."
                       follow-redirects max-redirects user-agent accept-encoding
                       basic-auth bearer-auth cookie-jar cookies proxy verify-ssl
                       ca-file verbose http-version range referer output on-data
-                      on-header))
+                      on-header on-progress))
   (let ((policy (make-retry retry))
         (configure (loop for (key value) on options by #'cddr
                          unless (member key '(:retry :session :force-binary

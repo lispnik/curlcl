@@ -5,6 +5,8 @@
 ;;;; headers and emits src/options-table.lisp and src/infos-table.lisp; those
 ;;;; files are committed, so the generator is never needed to build or use the
 ;;;; library, and it deliberately does not depend on #:libcurl.
+;;;; #:libcurl/cli builds bin/curlcl, a curl-compatible driver, with ASDF's
+;;;; program-op -- `make build', or (asdf:make :libcurl/cli).
 ;;;; #:libcurl/test is the FiveAM suite.  It runs an HTTP server and a
 ;;;; websocket echo server inside the image, so the integration tests are
 ;;;; hermetic; the one suite that uses the real network is skipped unless
@@ -71,6 +73,35 @@ generic CURLE_WRITE_ERROR."
                              (:file "client-request"))))
   :in-order-to ((test-op (test-op #:libcurl/test))))
 
+(asdf:defsystem #:libcurl/cli
+  :description "curlcl, a curl-compatible command-line driver for libcurl."
+  :long-description
+  "A working curl(1) workalike rather than a demo: option names, defaults,
+output destinations and exit codes follow curl, so most curl command lines
+work unchanged and scripts checking the exit status keep working -- the codes
+are libcurl's own CURLcode values.  Holding to that constraint is what forces
+the library underneath to cover what a real client needs rather than what is
+convenient to expose."
+  :author "Matthew Kennedy <burnsidemk@gmail.com>"
+  :maintainer "Matthew Kennedy <burnsidemk@gmail.com>"
+  :mailto "burnsidemk@gmail.com"
+  :license "MIT"
+  :version "0.1.0"
+  :homepage "https://github.com/lispnik/libcurl"
+  :source-control (:git "https://github.com/lispnik/libcurl.git")
+  :bug-tracker "https://github.com/lispnik/libcurl/issues"
+  :serial t
+  :depends-on (#:libcurl #:clingon #:alexandria)
+  :components ((:module "src"
+                :components ((:file "cli"))))
+  ;; Build with (asdf:make :libcurl/cli), producing bin/curlcl.  The dumped
+  ;; image reopens libcurl and re-prepares the libffi cifs through the restore
+  ;; hooks in src/library.lisp and src/varargs.lisp; without those the binary
+  ;; would start with a stale library handle and mis-pass every option.
+  :build-operation "program-op"
+  :build-pathname "bin/curlcl"
+  :entry-point "libcurl/cli:main")
+
 (asdf:defsystem #:libcurl/generator
   :description "Generates libcurl's option and info tables from the curl headers."
   :author "Matthew Kennedy <burnsidemk@gmail.com>"
@@ -101,7 +132,7 @@ generic CURLE_WRITE_ERROR."
   :source-control (:git "https://github.com/lispnik/libcurl.git")
   :bug-tracker "https://github.com/lispnik/libcurl/issues"
   :serial t
-  :depends-on (#:libcurl #:fiveam #:usocket #:bordeaux-threads)
+  :depends-on (#:libcurl #:libcurl/cli #:fiveam #:usocket #:bordeaux-threads)
   :components ((:module "test"
                 :serial t
                 :components ((:file "package")
@@ -119,6 +150,7 @@ generic CURLE_WRITE_ERROR."
                              (:file "ws-server")  ; websocket echo fixture
                              (:file "ws-tests")
                              (:file "client-tests")
+                             (:file "cli-tests")  ; needs bin/curlcl for some
                              (:file "live-tests"))))   ; opt-in; needs network
   ;; ASDF ignores whatever a TEST-OP perform method returns, so reporting
   ;; failure by returning NIL would leave `asdf:test-system' -- and therefore

@@ -1,0 +1,214 @@
+;;;; test/cli-tests.lisp — curlcl's argument handling.
+;;;;
+;;;; The pieces that turn a curl command line into request options are ordinary
+;;;; functions and are tested as such.  Whether the whole program behaves like
+;;;; curl is checked against the real curl by the end-to-end tests at the
+;;;; bottom, which run the built binary if there is one and skip if not.
+
+(in-package #:libcurl/test)
+
+(in-suite cli)
+
+(test splitting-on-the-first-separator-only
+  (multiple-value-bind (before after) (libcurl/cli::split-once "user:pass:word" #\:)
+    (is (string= "user" before))
+    ;; The rest is kept whole, so a password containing a colon survives.
+    (is (string= "pass:word" after)))
+  (multiple-value-bind (before after) (libcurl/cli::split-once "nocolon" #\:)
+    (is (string= "nocolon" before))
+    (is (null after))))
+
+(test form-arguments-are-parsed-the-way-curl-spells-them
+  (is (equal '(:name "field" :data "value")
+             (libcurl/cli::parse-form-part "field=value")))
+  ;; @ means a file rather than a literal value.
+  (is (equal '(:name "upload" :file "/tmp/x.png")
+             (libcurl/cli::parse-form-part "upload=@/tmp/x.png")))
+  (is (equal '(:name "upload" :file "/tmp/x.png" :content-type "image/png")
+             (libcurl/cli::parse-form-part "upload=@/tmp/x.png;type=image/png")))
+  (is (equal '(:name "f" :data "v" :content-type "text/plain")
+             (libcurl/cli::parse-form-part "f=v;type=text/plain")))
+  (signals error (libcurl/cli::parse-form-part "no-equals-sign")))
+
+(test remote-name-derives-a-filename-from-the-url
+  (is (string= "file.tar.gz"
+               (libcurl/cli::url-filename "https://example.com/a/b/file.tar.gz")))
+  (is (string= "page" (libcurl/cli::url-filename "https://example.com/page")))
+  ;; curl uses the last segment; with none, something has to be chosen.
+  (is (string= "index.html" (libcurl/cli::url-filename "https://example.com/")))
+  (is (string= "index.html" (libcurl/cli::url-filename "https://example.com"))))
+
+(defun make-test-response (&key (status 200) (url "https://example.com/")
+                                (content-type "text/html") (size 559)
+                                (version :http/2) (redirects 0)
+                                (timings '(:total 250000)))
+  (make-instance 'libcurl:response
+                 :status status :url url :version version
+                 :headers (list (libcurl::make-http-header :name "Content-Type"
+                                                           :value content-type))
+                 :body (make-array 0 :element-type '(unsigned-byte 8))
+                 :timings timings :redirect-count redirects
+                 :size-download size))
+
+(test write-out-expands-the-variables-curl-defines
+  (let ((response (make-test-response)))
+    (is (string= "200" (libcurl/cli::expand-write-out "%{http_code}" response)))
+    (is (string= "text/html"
+                 (libcurl/cli::expand-write-out "%{content_type}" response)))
+    (is (string= "559" (libcurl/cli::expand-write-out "%{size_download}" response)))
+    (is (string= "https://example.com/"
+                 (libcurl/cli::expand-write-out "%{url_effective}" response)))
+    ;; curl prints the bare version number, not a keyword.
+    (is (string= "2" (libcurl/cli::expand-write-out "%{http_version}" response)))
+    (is (string= "0.250000" (libcurl/cli::expand-write-out "%{time_total}" response)))))
+
+(test write-out-handles-escapes-and-literal-text
+  (let ((response (make-test-response)))
+    (is (string= (format nil "code=200~%")
+                 (libcurl/cli::expand-write-out "code=%{http_code}\\n" response)))
+    (is (string= (format nil "a~Cb" #\Tab)
+                 (libcurl/cli::expand-write-out "a\\tb" response)))
+    (is (string= "no variables here"
+                 (libcurl/cli::expand-write-out "no variables here" response)))))
+
+(test an-unknown-write-out-variable-is-left-visible
+  ;; Silently expanding to nothing would hide a typo; curl prints the variable
+  ;; back, and so does this.
+  (let ((response (make-test-response)))
+    (is (string= "%{no_such_thing}"
+                 (libcurl/cli::expand-write-out "%{no_such_thing}" response)))))
+
+(test the-exit-code-is-the-curlcode
+  ;; Scripts check curl's exit status, so ours has to be the same number.
+  (is (= 6 (libcurl/cli::exit-code-for
+            (make-condition 'libcurl:easy-error
+                            :code 6 :code-name :couldnt-resolve-host))))
+  (is (= 28 (libcurl/cli::exit-code-for
+             (make-condition 'libcurl:easy-error
+                             :code 28 :code-name :operation-timedout))))
+  ;; Anything that is not a libcurl failure gets curl's "failed to initialise".
+  (is (= 2 (libcurl/cli::exit-code-for (make-condition 'simple-error)))))
+
+;;; End to end, against the real curl -----------------------------------------
+
+(defparameter *curlcl-binary*
+  (asdf:system-relative-pathname :libcurl "bin/curlcl")
+  "The built driver.  Tests using it skip when it has not been built.")
+
+(defun run-program-capturing (program arguments)
+  "Run PROGRAM and return (values stdout exit-code)."
+  (multiple-value-bind (output error-output code)
+      (uiop:run-program (cons program arguments)
+                        :output :string :error-output :string
+                        :ignore-error-status t)
+    (declare (ignore error-output))
+    (values output code)))
+
+(defmacro with-curlcl-or-skip (&body body)
+  `(if (probe-file *curlcl-binary*)
+       (progn ,@body)
+       (skip "bin/curlcl has not been built; run `make build'")))
+
+(test the-driver-fetches-from-the-local-server
+  (with-curlcl-or-skip
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" (test-url "/ok")))
+      (is (= 0 code))
+      (is (string= "ok" output)))))
+
+(defun native-namestring-of (pathname)
+  (uiop:native-namestring pathname))
+
+(test the-driver-reports-status-through-write-out
+  (with-curlcl-or-skip
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" "-o" "/dev/null"
+                                     "-w" "%{http_code}"
+                                     (test-url "/status/418")))
+      (is (= 0 code))
+      (is (string= "418" output)))))
+
+(test the-driver-exits-with-the-curlcode
+  ;; The contract scripts depend on: a refused connection is 7, as curl's is.
+  (with-curlcl-or-skip
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" "http://127.0.0.1:1/nothing"))
+      (declare (ignore output))
+      (is (= 7 code)))))
+
+(test the-driver-fails-on-http-errors-only-when-asked
+  (with-curlcl-or-skip
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" (test-url "/status/404")))
+      (is (= 0 code) "a 404 without --fail is not an error")
+      (is (string= "status 404" output)))
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" "-f" (test-url "/status/404")))
+      (declare (ignore output))
+      ;; CURLE_HTTP_RETURNED_ERROR, which is what curl --fail exits with.
+      (is (= 22 code)))))
+
+(test the-driver-follows-redirects-only-with-location
+  (with-curlcl-or-skip
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" "-L" (test-url "/redirect/2")))
+      (is (= 0 code))
+      (is (string= "ok" output)))
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" "-o" "/dev/null" "-w" "%{http_code}"
+                                     (test-url "/redirect/2")))
+      (is (= 0 code))
+      (is (string= "302" output)))))
+
+(test the-driver-posts-data-and-sends-headers
+  (with-curlcl-or-skip
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" "-d" "a=1" "-d" "b=2"
+                                     "-H" "X-From: curlcl"
+                                     (test-url "/echo")))
+      (is (= 0 code))
+      (is (search "method=POST" output))
+      ;; Several -d arguments are joined with & as curl does.
+      (is (search "body=a=1&b=2" output))
+      (is (search "x-from: curlcl" (string-downcase output))))))
+
+(test the-driver-runs-transfers-in-parallel
+  (with-curlcl-or-skip
+    ;; Four ~200ms transfers; -Z should overlap them.
+    (let* ((url (test-url "/drip?n=4&ms=50"))
+           (start (get-internal-real-time))
+           (code (nth-value 1 (run-program-capturing
+                               (native-namestring-of *curlcl-binary*)
+                               (list "-s" "-Z" "-o" "/dev/null" "-o" "/dev/null"
+                                     "-o" "/dev/null" "-o" "/dev/null"
+                                     url url url url))))
+           (elapsed (/ (- (get-internal-real-time) start)
+                       internal-time-units-per-second 1.0)))
+      (is (= 0 code))
+      (is (< elapsed 0.6)
+          "four 0.2s transfers took ~,2Fs with -Z; they did not overlap"
+          elapsed))))
+
+(test the-driver-agrees-with-curl-where-curl-is-available
+  ;; The comparison that matters: same URL, same body.  Skipped when there is
+  ;; no curl to compare against.
+  (with-curlcl-or-skip
+    ;; Detected by exit status: RUN-PROGRAM with :OUTPUT NIL returns NIL as its
+    ;; first value even on success, so testing that would skip unconditionally.
+    (if (eql 0 (nth-value 2 (uiop:run-program '("curl" "--version")
+                                              :output nil :error-output nil
+                                              :ignore-error-status t)))
+        (let ((ours (run-program-capturing (native-namestring-of *curlcl-binary*)
+                                           (list "-s" (test-url "/large?bytes=5000"))))
+              (theirs (run-program-capturing "curl"
+                                             (list "-s" (test-url "/large?bytes=5000")))))
+          (is (string= ours theirs)))
+        (skip "curl is not installed"))))

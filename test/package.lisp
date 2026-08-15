@@ -8,7 +8,7 @@
            #:all-tests
            ;; Suites.
            #:library #:types #:varargs #:tables #:easy
-           #:url #:headers #:mime #:share #:multi #:websockets #:client #:live))
+           #:url #:headers #:mime #:share #:multi #:websockets #:client #:cli #:live))
 
 (in-package #:libcurl/test)
 
@@ -53,6 +53,10 @@
 
 (def-suite multi
   :description "Many transfers on one thread."
+  :in all-tests)
+
+(def-suite cli
+  :description "curlcl's argument handling, and the built binary if present."
   :in all-tests)
 
 (def-suite live

@@ -178,6 +178,36 @@ downcase, underscores to hyphens — so `CURLOPT_SSL_VERIFYPEER` is
 `:ssl-verifypeer`. An option the loaded libcurl does not have is reported by
 name rather than as `CURLE_UNKNOWN_OPTION`.
 
+## The command-line driver
+
+`make build` produces `bin/curlcl`, a curl(1) workalike built on the library.
+Option names, defaults, output destinations and **exit codes** follow curl, so
+most curl command lines work unchanged and scripts that check the exit status
+keep working — the codes are libcurl's own CURLcode values.
+
+```
+$ curlcl -s -o /dev/null -w '%{http_code} %{size_download}b in %{time_total}s\n' https://example.com/
+200 559b in 0.086570s
+
+$ curlcl -s -L -H 'Accept: application/json' https://api.example.com/thing
+$ curlcl -s -F 'file=@report.pdf;type=application/pdf' https://example.com/upload
+$ curlcl -sZ -o a.html -o b.html https://a.example/ https://b.example/   # parallel
+$ curlcl --retry 3 https://flaky.example/                                # scheduled backoff
+```
+
+Holding to curl's behaviour is the point: it forces the library to cover what a
+real client needs rather than what is convenient to expose. `-Z` goes through
+`request-many`, `--retry` through the scheduled backoff, `-F` through
+`curl_mime_*`, `-w` through `getinfo`.
+
+Two deliberate differences, both in `--help`: there is no progress meter unless
+`--progress-bar` is given, and `--upload-file` reads the file into memory
+rather than streaming it.
+
+`curlcl -V` also reports **which** libcurl it loaded, which curl has no need to
+do — this binding can load any of several, and on macOS they differ in version,
+TLS backend and protocol support.
+
 ## Running the tests
 
 ```

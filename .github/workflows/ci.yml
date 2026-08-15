@@ -58,6 +58,17 @@ jobs:
             --eval '(asdf:load-system :libcurl)' \
             --eval '(format t "~&libcurl ~A at ~A~%protocols: ~A~%features: ~A~%" (libcurl:libcurl-version) (libcurl:libcurl-pathname) (libcurl:libcurl-protocols) (libcurl:libcurl-features))'
 
+      # Built before the tests, because the CLI suite runs the real binary and
+      # skips the end-to-end cases when it is missing.
+      - name: Build the executable
+        run: |
+          sbcl --non-interactive \
+            --load "$HOME/.local/share/ocicl/ocicl-runtime.lisp" \
+            --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' \
+            --eval '(asdf:make :libcurl/cli)'
+          ./bin/curlcl -V
+          ./bin/curlcl -s -o /dev/null -w 'smoke: %{http_code} in %{time_total}s\n' https://example.com/
+
       - name: Run tests
         run: |
           sbcl --non-interactive \

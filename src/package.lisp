@@ -243,6 +243,8 @@
    #:response-request-method
    #:response-timings
    #:response-redirect-count
+   #:response-size-download
+   #:response-size-upload
    #:response-header-values
    #:response-content-type
    #:response-text

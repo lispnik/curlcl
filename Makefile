@@ -1,6 +1,7 @@
 # Makefile for libcurl.
 #
 # Targets:
+#   make build   build the bin/curlcl executable
 #   make test    load the test system and run the FiveAM suite (default)
 #   make deps    restore ocicl-vendored dependencies
 #   make tables  regenerate src/options.lisp and src/infos.lisp from the
@@ -15,10 +16,17 @@
 # network; it is skipped by default so the suite stays hermetic.
 
 LISP ?= sbcl
+BIN  := bin/curlcl
 
-.PHONY: all test deps tables clean
+.PHONY: all build test deps tables clean
 
 all: test
+
+# Build the curl-compatible driver via ASDF's program-op.  The output path and
+# entry point are declared in the libcurl/cli system.
+build:
+	$(LISP) --non-interactive --eval '(asdf:make :libcurl/cli)'
+	@echo "built $(BIN)"
 
 # Run the suite, exiting non-zero if any check fails.  RUN-TESTS explains the
 # failures and returns the status; fiveam:run! alone would exit 0 on failure.
@@ -39,5 +47,6 @@ tables:
 	  --eval '(libcurl/generator:generate-tables)'
 
 clean:
+	rm -f $(BIN)
 	rm -rf *.fasl
 	rm -rf $(HOME)/.cache/common-lisp/*/$(CURDIR)

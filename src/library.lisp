@@ -297,13 +297,30 @@ not be called while any handle is still alive or from a finalizer."
   (setf *libcurl-pathname* nil
         *version-info* nil
         *global-initialized-p* nil)
+  ;; Close before loading.  CFFI's record of the library as open survives the
+  ;; image dump, so USE-FOREIGN-LIBRARY would short-circuit and never dlopen
+  ;; anything -- leaving the process bound to whatever libcurl dyld happened to
+  ;; pull in at startup.  On macOS that is /usr/lib/libcurl.4.dylib from the
+  ;; shared cache, which is a different version with a different TLS backend
+  ;; and no websockets, so a dumped executable would silently disagree with the
+  ;; same code run from source.
+  (ignore-errors (cffi:close-foreign-library 'libcurl))
   (load-libcurl)
   (global-init))
 
 (defun %prepare-for-dump ()
   (setf *version-info* nil
         *global-initialized-p* nil
-        *libcurl-pathname* nil))
+        *libcurl-pathname* nil)
+  ;; Unload before dumping, so the saved image carries no record of libcurl at
+  ;; all.  Otherwise SBCL notes the shared object and dyld reopens it at
+  ;; startup, before any Lisp runs -- and it reopens it by soname, which on
+  ;; macOS resolves through the shared cache to /usr/lib/libcurl.4.dylib.  Two
+  ;; libcurls then sit in the process, SBCL's symbol lookup is global and finds
+  ;; the first, and a dumped executable silently runs against a different
+  ;; version with a different TLS backend and no websockets than the same code
+  ;; run from source.  Closing here leaves the restore hook to open exactly one.
+  (ignore-errors (cffi:close-foreign-library 'libcurl)))
 
 (uiop:register-image-dump-hook '%prepare-for-dump)
 (uiop:register-image-restore-hook '%reinitialize nil)
