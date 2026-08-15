@@ -7,7 +7,7 @@
   (:export #:run-tests
            #:all-tests
            ;; Suites.
-           #:library #:types #:varargs #:tables #:easy
+           #:library #:types #:varargs #:tables #:callbacks #:easy
            #:url #:headers #:mime #:share #:multi #:websockets #:client #:cli #:live))
 
 (in-package #:libcurl/test)
@@ -29,6 +29,11 @@
 
 (def-suite tables
   :description "The generated option and info tables, against the loaded library."
+  :in all-tests)
+
+(def-suite callbacks
+  :description "Every trampoline: dispatch, argument decoding, and the failure
+value libcurl documents for that particular callback."
   :in all-tests)
 
 (def-suite easy

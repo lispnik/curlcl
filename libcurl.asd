@@ -141,6 +141,7 @@ convenient to expose."
                              (:file "varargs-tests")
                              (:file "tables-tests")
                              (:file "server")     ; in-process HTTP fixture
+                             (:file "callback-tests")
                              (:file "easy-tests")
                              (:file "url-tests")
                              (:file "headers-tests")
