@@ -93,7 +93,10 @@ still be reading the very buffers being freed here."
                                 pointer '(:struct curl-blob) 'data)))
                      (unless (cffi:null-pointer-p data)
                        (cffi:foreign-free data)))
-                   (cffi:foreign-free pointer))))))
+                   (cffi:foreign-free pointer))
+          ;; A curl_mime must be freed after curl_easy_cleanup, which is
+          ;; exactly when this sweep runs.
+          ((:mime) (%curl-mime-free pointer))))))
   (setf (resources-items resources) '())
   (values))
 

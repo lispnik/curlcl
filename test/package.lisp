@@ -7,7 +7,8 @@
   (:export #:run-tests
            #:all-tests
            ;; Suites.
-           #:library #:types #:varargs #:tables #:easy))
+           #:library #:types #:varargs #:tables #:easy
+           #:url #:headers #:mime #:share))
 
 (in-package #:libcurl/test)
 
@@ -32,6 +33,22 @@
 
 (def-suite easy
   :description "The easy handle, moving real bytes against the local server."
+  :in all-tests)
+
+(def-suite url
+  :description "libcurl's URL parser."
+  :in all-tests)
+
+(def-suite headers
+  :description "Response headers, as libcurl parsed them."
+  :in all-tests)
+
+(def-suite mime
+  :description "Multipart bodies."
+  :in all-tests)
+
+(def-suite share
+  :description "Shared cookies, DNS, TLS sessions and connections."
   :in all-tests)
 
 (defun run-tests ()

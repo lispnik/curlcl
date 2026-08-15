@@ -41,6 +41,11 @@
   (list :pointer) (data :string))
 (cffi:defcfun ("curl_slist_free_all" %curl-slist-free-all) :void (list :pointer))
 
+;;; Declared here rather than beside the rest of the mime API because
+;;; src/memory.lisp releases mime handles as part of a handle's resource sweep,
+;;; and it loads first.
+(cffi:defcfun ("curl_mime_free" %curl-mime-free) :void (mime :pointer))
+
 ;;; Option introspection ------------------------------------------------------
 ;;;
 ;;; curl_easy_option_* lets the *loaded* libcurl describe its own options, which

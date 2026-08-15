@@ -97,4 +97,52 @@
    #:option-deprecated
    #:option-supported-p
    #:info-id
-   #:info-kind))
+   #:info-kind
+
+   ;; The URL parser.  Worth using over a Lisp one because it is the parser
+   ;; libcurl will apply to the transfer, quirks included.
+   #:url
+   #:make-url
+   #:close-url
+   #:with-url
+   #:duplicate-url
+   #:url-pointer
+   #:url-part
+   #:url-closed-p
+   #:url-string
+   #:parse-url
+   #:url-join
+
+   ;; Response headers, as libcurl parsed them.
+   #:http-header
+   #:header-name
+   #:header-value
+   #:header-amount
+   #:header-index
+   #:header-origin
+   #:response-header
+   #:response-header-value
+   #:response-headers
+
+   ;; Multipart bodies.  Only curl_mime_* is bound; curl_formadd is deprecated
+   ;; throughout and variadic with a sentinel list.
+   #:mime
+   #:make-mime
+   #:mime-pointer
+   #:mime-freed-p
+   #:add-mime-part
+   #:attach-mime
+   #:set-mime-body
+
+   ;; Shared cookies, DNS, TLS sessions and connections.  Lock callbacks are
+   ;; always installed, so a share is safe across threads.
+   #:share-handle
+   #:make-share
+   #:share-closed-p
+   #:share-pointer
+   #:close-share
+   #:with-share
+   #:share-data
+   #:unshare-data
+   #:attach-share
+   #:detach-share))

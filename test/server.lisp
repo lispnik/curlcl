@@ -53,7 +53,7 @@
           collect (cons (string-downcase (subseq line 0 colon))
                         (string-trim " " (subseq line (1+ colon))))))
 
-(defun header-value (headers name)
+(defun request-header (headers name)
   (cdr (assoc name headers :test #'string-equal)))
 
 (defun read-request (stream)
@@ -61,7 +61,7 @@
     (when (and line (plusp (length line)))
       (let* ((parts (uiop:split-string line :separator " "))
              (headers (parse-headers stream))
-             (length (header-value headers "content-length"))
+             (length (request-header headers "content-length"))
              (body (when length
                      (let ((octets (make-array (parse-integer length)
                                                :element-type '(unsigned-byte 8))))
@@ -125,6 +125,7 @@
 ;;; Routing -------------------------------------------------------------------
 
 (defun handle-request (server request stream)
+  (declare (ignore server))
   (multiple-value-bind (path query) (path-query (request-path request))
     (cond
       ((string= path "/ok")
@@ -187,7 +188,7 @@
                                        ("X-Repeated" . "second"))))
 
       ((string= path "/auth/basic")
-       (if (header-value (request-headers request) "authorization")
+       (if (request-header (request-headers request) "authorization")
            (send-response stream 200 :body "authenticated")
            (send-response stream 401 :body "denied"
                           :extra-headers
@@ -199,7 +200,7 @@
 
       ((string= path "/cookie/echo")
        (send-response stream 200
-                      :body (or (header-value (request-headers request) "cookie")
+                      :body (or (request-header (request-headers request) "cookie")
                                 "no cookie")))
 
       ;; Promises more than it delivers, then hangs up: libcurl reports
@@ -218,7 +219,7 @@ Connection: close~C~C~C~C"
                       :extra-headers '(("Retry-After" . "1"))))
 
       (t (send-response stream 404 :body "not found")))
-    (when (string-equal "close" (header-value (request-headers request) "connection"))
+    (when (string-equal "close" (request-header (request-headers request) "connection"))
       :close)))
 
 (defun send-chunked (stream count)
@@ -288,7 +289,7 @@ Content-Length: ~D~C~C~C~C"
 (defun stop-test-server (server)
   (setf (server-running server) nil)
   (ignore-errors (usocket:socket-close (server-listener server)))
-  (ignore-errors (bt:join-thread (server-thread server) :timeout 2))
+  (ignore-errors (bt:join-thread (server-thread server)))
   (values))
 
 (defun server-url (server path)

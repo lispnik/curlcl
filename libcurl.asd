@@ -53,7 +53,11 @@ generic CURLE_WRITE_ERROR."
                              (:file "infos")
                              (:file "infos-table")   ; generated
                              (:file "callbacks")  ; registry + trampolines
-                             (:file "easy"))))    ; the EASY-HANDLE class
+                             (:file "easy")       ; the EASY-HANDLE class
+                             (:file "url")        ; the URL parser
+                             (:file "headers")    ; parsed response headers
+                             (:file "mime")       ; multipart bodies
+                             (:file "share"))))   ; shared cookies/DNS/connections
   :in-order-to ((test-op (test-op #:libcurl/test))))
 
 (asdf:defsystem #:libcurl/generator
@@ -95,7 +99,11 @@ generic CURLE_WRITE_ERROR."
                              (:file "varargs-tests")
                              (:file "tables-tests")
                              (:file "server")     ; in-process HTTP fixture
-                             (:file "easy-tests"))))
+                             (:file "easy-tests")
+                             (:file "url-tests")
+                             (:file "headers-tests")
+                             (:file "mime-tests")
+                             (:file "share-tests"))))
   ;; ASDF ignores whatever a TEST-OP perform method returns, so reporting
   ;; failure by returning NIL would leave `asdf:test-system' -- and therefore
   ;; CI -- green on a suite that failed.  Signal.
