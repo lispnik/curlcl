@@ -40,23 +40,29 @@
   ;; CURLE_UNSUPPORTED_PROTOCOL, negatives are CURLE_BAD_FUNCTION_ARGUMENT.
   ;; Three outcomes keyed on the exact integer is about as sharp a probe as
   ;; setopt offers: an argument read from the wrong place cannot sort itself
-  ;; into a scattered eight-element set and two distinct error classes.
+  ;; into a scattered set and two distinct error classes.
   (with-raw-handle (h)
-    ;; 30 and 31 are the HTTP/3 constants, and a libcurl built without HTTP/3
-    ;; rejects them -- Ubuntu's does.  What the test is really about is the
-    ;; sparse pattern, so the set is taken from what this build supports rather
-    ;; than hard-coded from one machine's.
-    (dolist (accepted (append '(0 1 2 3 4 5)
-                              (when (feature-supported-p :http3) '(30 31))))
-      (is (eq :ok (curlcode-keyword (libcurl::%setopt-long h +opt-http-version+ accepted)))
-          "CURLOPT_HTTP_VERSION ~D should be accepted" accepted))
-    (dolist (rejected (append '(6 7 20 29 32 40 99)
-                              (unless (feature-supported-p :http3) '(30 31))))
-      (is (eq :unsupported-protocol
-              (curlcode-keyword (libcurl::%setopt-long h +opt-http-version+ rejected)))
-          "CURLOPT_HTTP_VERSION ~D should be rejected as unsupported" rejected))
-    (is (eq :bad-function-argument
-            (curlcode-keyword (libcurl::%setopt-long h +opt-http-version+ -1))))))
+    ;; 3, 4 and 5 are the HTTP/2 constants and 30 and 31 the HTTP/3 ones, and a
+    ;; libcurl built without either rejects its own -- Ubuntu's has no HTTP/3,
+    ;; the Windows build has neither.  What the test is really about is the
+    ;; sparse pattern, so both sets are taken from what this build supports
+    ;; rather than hard-coded from one machine's.  Whichever way a version
+    ;; lands, it lands in one of the two lists, so the partition stays total.
+    (let* ((http2 (when (feature-supported-p :http2) '(3 4 5)))
+           (http3 (when (feature-supported-p :http3) '(30 31)))
+           (accepted (append '(0 1 2) http2 http3))
+           (rejected (append '(6 7 20 29 32 40 99)
+                             (set-difference '(3 4 5) http2)
+                             (set-difference '(30 31) http3))))
+      (dolist (version accepted)
+        (is (eq :ok (curlcode-keyword (libcurl::%setopt-long h +opt-http-version+ version)))
+            "CURLOPT_HTTP_VERSION ~D should be accepted" version))
+      (dolist (version rejected)
+        (is (eq :unsupported-protocol
+                (curlcode-keyword (libcurl::%setopt-long h +opt-http-version+ version)))
+            "CURLOPT_HTTP_VERSION ~D should be rejected as unsupported" version))
+      (is (eq :bad-function-argument
+              (curlcode-keyword (libcurl::%setopt-long h +opt-http-version+ -1)))))))
 
 (test setopt-long-preserves-sign
   ;; The sign boundary is sharp where the upper bounds are not: libcurl clamps

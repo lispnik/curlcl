@@ -92,7 +92,13 @@
 ;;; End to end, against the real curl -----------------------------------------
 
 (defparameter *curlcl-binary*
-  (asdf:system-relative-pathname :libcurl "bin/curlcl")
+  ;; ASDF's program-op appends .exe on Windows, so the built name is not the
+  ;; :build-pathname verbatim.  Both spellings are tried rather than
+  ;; feature-conditionalised, so a binary built either way is found.
+  (or (find-if #'probe-file
+               (list (asdf:system-relative-pathname :libcurl "bin/curlcl")
+                     (asdf:system-relative-pathname :libcurl "bin/curlcl.exe")))
+      (asdf:system-relative-pathname :libcurl "bin/curlcl"))
   "The built driver.  Tests using it skip when it has not been built.")
 
 (defun run-program-capturing (program arguments)
