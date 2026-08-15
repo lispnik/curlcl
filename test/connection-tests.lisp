@@ -126,6 +126,35 @@
             "expected a proxy connection failure, got ~S"
             (curl-error-code-name c))))))
 
+(test a-proxy-shuts-down-promptly-and-leaves-no-thread
+  ;; The fixture's own shutdown path, asserted because it is platform-specific
+  ;; in two ways that only showed up in CI.  Closing a listening socket does not
+  ;; interrupt a thread already blocked in accept() on Linux -- it does on
+  ;; macOS -- so a join here waited forever and the job ran until it was
+  ;; cancelled.  And on Windows accept answers NIL rather than signalling when
+  ;; the listener closes under it, which reached SOCKET-STREAM as a NIL and,
+  ;; being unhandled in a thread, quit the whole process.
+  ;;
+  ;; Both are shutdown bugs, so both are invisible to any test that only starts
+  ;; a fixture.  Several rounds make a hang certain rather than likely.
+  (dotimes (i 3)
+    (let* ((start (get-internal-real-time))
+           (proxy (start-test-proxy))
+           (thread (proxy-thread proxy)))
+      ;; One real request, so the loop is somewhere interesting rather than
+      ;; freshly blocked on its first accept.
+      (with-easy (handle)
+        (setopts handle :url "http://origin.invalid/ok"
+                        :proxy (proxy-url proxy) :timeout 10)
+        (perform handle))
+      (stop-test-proxy proxy)
+      (let ((seconds (/ (- (get-internal-real-time) start)
+                        internal-time-units-per-second)))
+        (is (< seconds 10)
+            "round ~D: shutting the proxy down took ~,1Fs" i seconds))
+      (is (not (bt:thread-alive-p thread))
+          "round ~D: the accept thread outlived the proxy" i))))
+
 ;;; Binding the local end -----------------------------------------------------
 
 (test a-bound-interface-still-transfers

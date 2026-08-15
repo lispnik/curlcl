@@ -4,9 +4,6 @@ on:
   push:
     branches: [master]
   pull_request:
-  # So a run can be started without a commit -- useful when a run fails before
-  # it starts any jobs, which cannot be retried through the API.
-  workflow_dispatch:
 
 jobs:
   test:
@@ -86,7 +83,7 @@ jobs:
   # steps are PowerShell.   b What it catches is real -- curl_socket_t is a
   # different width here, standard output is a handle rather than a descriptor,
   # and CRLF checkouts break FORMAT's line-continuation directive.
-  windows:XS
+  windows:
     name: sbcl · windows-latest
     runs-on: windows-latest
     steps:
