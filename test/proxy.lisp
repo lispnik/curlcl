@@ -107,21 +107,21 @@ bypassed."
     (setf (proxy-thread proxy)
           (bt:make-thread
            (lambda ()
-             (loop while (proxy-running proxy)
-                   do (handler-case
-                          (let ((socket (usocket:socket-accept listener)))
-                            (bt:make-thread
-                             (lambda () (serve-proxy-connection proxy socket))
-                             :name "libcurl test proxy connection"))
-                        (error () (return)))))
+             (accept-loop listener
+                          (lambda () (proxy-running proxy))
+                          (lambda (socket) (serve-proxy-connection proxy socket))
+                          "libcurl test proxy connection"))
            :name "libcurl test proxy"))
     proxy))
 
 (defun stop-test-proxy (proxy)
-  (setf (proxy-running proxy) nil)
-  (ignore-errors (usocket:socket-close (proxy-listener proxy)))
-  (ignore-errors (bt:join-thread (proxy-thread proxy)))
-  (values))
+  ;; Unlike the origin server, which lives for the whole suite, a proxy is
+  ;; started and stopped per test -- so this path runs constantly, and it is
+  ;; where both of ACCEPT-LOOP's hazards were found.
+  (stop-accepting (proxy-listener proxy)
+                  (proxy-port proxy)
+                  (lambda () (setf (proxy-running proxy) nil))
+                  (proxy-thread proxy)))
 
 (defun proxy-url (proxy)
   (format nil "http://127.0.0.1:~D" (proxy-port proxy)))

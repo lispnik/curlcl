@@ -80,10 +80,10 @@ jobs:
   # Windows runs the same suite as the Unix jobs.  It is a separate job rather
   # than a matrix entry because everything around the tests differs: SBCL comes
   # from Chocolatey, the C toolchain and libffi and libcurl from MSYS2, and the
-  # steps are PowerShell.  What it catches is real -- curl_socket_t is a
+  # steps are PowerShell.   b What it catches is real -- curl_socket_t is a
   # different width here, standard output is a handle rather than a descriptor,
   # and CRLF checkouts break FORMAT's line-continuation directive.
-  windows:
+  windows:XS
     name: sbcl · windows-latest
     runs-on: windows-latest
     steps:

@@ -307,6 +307,51 @@ Content-Length: ~D~C~C~C~C"
 
 ;;; Lifecycle -----------------------------------------------------------------
 
+;;; Accepting -----------------------------------------------------------------
+;;;
+;;; Two things about running an accept loop in a thread are worth stating once
+;;; here, because both were learned the hard way and both fixtures need them.
+;;;
+;;; A fixture thread must never signal its way out.  SBCL run with
+;;; --disable-debugger quits the *process* on an unhandled condition in any
+;;; thread, so a fixture that dies takes the whole suite with it and reports
+;;; whatever test happened to be running as the culprit.  On Windows,
+;;; SOCKET-ACCEPT answers NIL when the listener is closed under it rather than
+;;; signalling, which is how a NIL reached SOCKET-STREAM and killed a run.
+;;;
+;;; And closing a listening socket does not reliably interrupt a thread already
+;;; blocked in accept().  It does on macOS; on Linux the thread stays blocked,
+;;; so joining it waits forever.  Connecting to the port once, after clearing
+;;; the running flag, is what actually wakes it.
+
+(defun accept-loop (listener running-p connection-handler name)
+  "Accept connections until RUNNING-P answers false, handling each in a thread."
+  (loop while (funcall running-p)
+        do (let ((socket (handler-case (usocket:socket-accept listener)
+                           (error () nil))))
+             (cond
+               ((null socket) (return))
+               ((not (funcall running-p))
+                (ignore-errors (usocket:socket-close socket))
+                (return))
+               (t (bt:make-thread
+                   (lambda ()
+                     ;; Deliberately swallowing everything: see above.
+                     (handler-case (funcall connection-handler socket)
+                       (serious-condition () nil)))
+                   :name name))))))
+
+(defun stop-accepting (listener port running-flag-setter thread)
+  "Shut down an accept loop and wait for its thread, without hanging."
+  (funcall running-flag-setter)
+  ;; Wake the accept.  The loop sees the cleared flag and returns.
+  (ignore-errors
+   (usocket:socket-close
+    (usocket:socket-connect "127.0.0.1" port :element-type '(unsigned-byte 8))))
+  (ignore-errors (bt:join-thread thread))
+  (ignore-errors (usocket:socket-close listener))
+  (values))
+
 (defun serve-connection (server socket)
   (unwind-protect
        (let ((stream (usocket:socket-stream socket)))
@@ -331,24 +376,20 @@ Content-Length: ~D~C~C~C~C"
     (setf (server-thread server)
           (bt:make-thread
            (lambda ()
-             (loop while (server-running server)
-                   do (handler-case
-                          (let ((socket (usocket:socket-accept listener)))
-                            ;; A thread per connection, so tests that run
-                            ;; several transfers at once against this server
-                            ;; are not serialised by it.
-                            (bt:make-thread
-                             (lambda () (serve-connection server socket))
-                             :name "libcurl test connection"))
-                        (error () (return)))))
+             ;; A thread per connection, so tests that run several transfers at
+             ;; once against this server are not serialised by it.
+             (accept-loop listener
+                          (lambda () (server-running server))
+                          (lambda (socket) (serve-connection server socket))
+                          "libcurl test connection"))
            :name "libcurl test server"))
     server))
 
 (defun stop-test-server (server)
-  (setf (server-running server) nil)
-  (ignore-errors (usocket:socket-close (server-listener server)))
-  (ignore-errors (bt:join-thread (server-thread server)))
-  (values))
+  (stop-accepting (server-listener server)
+                  (server-port server)
+                  (lambda () (setf (server-running server) nil))
+                  (server-thread server)))
 
 (defun server-url (server path)
   (format nil "http://127.0.0.1:~D~A" (server-port server) path))
