@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    name: sbcl · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Both platforms are in the matrix for a specific reason: libcurl's
+      # setopt/getinfo are variadic, and how the variadic argument is passed
+      # differs between x86-64 SysV (registers) and Darwin arm64 (stack).  The
+      # macOS runner is what proves the libffi path in src/varargs.lisp is
+      # actually necessary; the Linux runner proves it did not break the case
+      # that would have worked anyway.
+      - name: Install SBCL and libcurl
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update
+            # libffi-dev and pkg-config are for cffi-libffi's grovel step.
+            sudo apt-get install -y sbcl libcurl4-openssl-dev libffi-dev pkg-config
+          else
+            brew install sbcl curl
+          fi
+
+      - name: Install and configure ocicl
+        run: |
+          # Clone the ocicl *tool* outside the repo so it does not collide with
+          # this project's gitignored ocicl/ dependency directory.
+          git clone --depth 1 https://github.com/ocicl/ocicl.git "$HOME/ocicl-src"
+          ( cd "$HOME/ocicl-src" && sbcl --non-interactive --load setup.lisp )
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Restore dependencies
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          ocicl setup
+          ocicl install
+
+      - name: Report which libcurl was loaded
+        # Worth its own step: the binding feature-gates on the loaded library,
+        # and on macOS it may resolve either the Homebrew build or the older
+        # one in the dyld shared cache.  When a test skips, this says why.
+        run: |
+          sbcl --non-interactive \
+            --load "$HOME/.local/share/ocicl/ocicl-runtime.lisp" \
+            --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' \
+            --eval '(asdf:load-system :libcurl)' \
+            --eval '(format t "~&libcurl ~A at ~A~%protocols: ~A~%features: ~A~%" (libcurl:libcurl-version) (libcurl:libcurl-pathname) (libcurl:libcurl-protocols) (libcurl:libcurl-features))'
+
+      - name: Run tests
+        run: |
+          sbcl --non-interactive \
+            --load "$HOME/.local/share/ocicl/ocicl-runtime.lisp" \
+            --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' \
+            --eval '(asdf:load-system :libcurl/test)' \
+            --eval '(uiop:quit (if (libcurl/test:run-tests) 0 1))'
