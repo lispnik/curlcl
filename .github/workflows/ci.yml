@@ -153,7 +153,13 @@ jobs:
             --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' `
             --eval '(asdf:make :libcurl/cli)'
           Get-ChildItem bin
-          & (Get-ChildItem bin\curlcl* | Select-Object -First 1).FullName -V
+          $exe = (Get-ChildItem bin\curlcl* | Select-Object -First 1).FullName
+          & $exe -V
+          # Verbose and allowed to fail: the point is to see what the driver
+          # says on stderr, which is the part the test suite cannot show when
+          # every case fails at once.
+          & $exe -v -o NUL -w 'smoke: %{http_code} in %{time_total}s' https://example.com/
+          Write-Host "smoke exit: $LASTEXITCODE"
 
       - name: Run tests
         shell: pwsh
