@@ -53,6 +53,8 @@
    #:unsupported-option-name
    #:unsupported-feature
    #:library-not-found
+   #:unsafe-retry
+   #:unsafe-retry-sink
 
    #:handle-closed
 

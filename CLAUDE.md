@@ -158,6 +158,15 @@ package → conditions → library → types → varargs → easy-raw → memory
   /dev/fd fallback), and `force-gc` in the tests. ECL loads the library and
   performs requests, but the full suite stalls partway, so it is not in CI.
 
+- **A retry re-delivers the whole body, so the sink has to be replayable.**
+  This is why `:OUTPUT` takes a pathname as well as a stream: with a pathname
+  the file is reopened and truncated per attempt, and with a caller's stream it
+  cannot be, so `check-retry-is-replayable` refuses the combination before the
+  first attempt rather than on the retry that corrupts the file. `download`
+  passes the pathname through for exactly this reason — it used to open the
+  file itself, which made `(download url path :retry 3)` silently produce a
+  file with a failed attempt's body in front of the real one.
+
 - **Exported symbols collide with test helpers.** Four times a test-local
   definition has landed on an exported library symbol, because `libcurl/test`
   uses `#:libcurl`: `with-easy`, `header-value` and `response-header` were

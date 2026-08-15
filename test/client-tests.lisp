@@ -791,3 +791,137 @@ reporting progress" (- latest earliest))))))
     (let ((after (loop repeat 5 collect (libcurl::jitter-factor))))
       (is (not (equal before after))
           "reseeding produced the same sequence"))))
+
+;;; Retrying a streamed body ---------------------------------------------------
+;;;
+;;; A retry re-runs the transfer from the start and libcurl delivers the whole
+;;; body again.  Where those bytes land is the question, and it has three
+;;; different answers depending on who owns the destination.
+
+(test a-retried-download-to-a-pathname-is-not-doubled
+  ;; The bug this file's :OUTPUT handling exists to prevent.  /flaky answers
+  ;; with a body on the failing attempts too, so a run that appended rather
+  ;; than truncating leaves "attempt 1 of 2 failing" sitting in front of the
+  ;; real answer -- a corrupt file, with nothing signalled.  Owning the file
+  ;; and reopening it per attempt is what makes the last attempt the only one
+  ;; that survives.
+  (reset-flaky "retry-download")
+  (uiop:with-temporary-file (:pathname path)
+    (delete-file path)
+    (let ((response (download (test-url "/flaky?id=retry-download&fail=2")
+                              path
+                              :retry '(:max-attempts 5 :initial-delay 0.01))))
+      (is (= 200 (response-status response)))
+      (let ((written (file-contents path)))
+        (is (string= "succeeded on attempt 3" written)
+            "the file holds ~S, so a failed attempt's body survived" written)))))
+
+(test the-same-thing-through-output-rather-than-download
+  ;; DOWNLOAD is a thin wrapper, so the property has to belong to :OUTPUT
+  ;; itself rather than to the wrapper.
+  (reset-flaky "retry-output-path")
+  (uiop:with-temporary-file (:pathname path)
+    (delete-file path)
+    (http-get (test-url "/flaky?id=retry-output-path&fail=1")
+              :output path
+              :retry '(:max-attempts 3 :initial-delay 0.01))
+    (is (string= "succeeded on attempt 2" (file-contents path)))))
+
+(defmacro with-output-stream-to-file ((stream path) &body body)
+  "Run BODY with STREAM open on PATH for binary output, as a caller would."
+  `(with-open-file (,stream ,path :direction :output
+                                  :element-type '(unsigned-byte 8)
+                                  :if-exists :supersede
+                                  :if-does-not-exist :create)
+     ,@body))
+
+(test retrying-onto-a-caller-stream-is-refused-rather-than-corrupted
+  ;; The stream belongs to the caller: rewinding and truncating it is not this
+  ;; library's to do, and appending to it silently is the corruption above.  So
+  ;; the combination is refused, and refused before anything is transferred --
+  ;; a request that only failed on the retry would already have written to the
+  ;; stream by then.
+  (reset-flaky "retry-stream")
+  (uiop:with-temporary-file (:pathname path)
+    (with-output-stream-to-file (sink path)
+      (signals unsafe-retry
+        (http-get (test-url "/flaky?id=retry-stream&fail=1")
+                  :output sink
+                  :retry '(:max-attempts 3 :initial-delay 0.01))))
+    ;; Nothing was sent, so nothing was written and no attempt was spent.
+    (is (zerop (length (file-contents path))))))
+
+(test retrying-with-on-data-is-refused-for-the-same-reason
+  (signals unsafe-retry
+    (http-get (test-url "/ok")
+              :on-data (lambda (octets) (declare (ignore octets)))
+              :retry 3)))
+
+(test a-streamed-request-that-will-not-retry-is-not-refused
+  ;; :RETRY NIL, and the default, are not contradictions -- only a policy that
+  ;; would actually try again is.  Refusing those would make :OUTPUT useless
+  ;; wherever a batch-wide retry had been set.
+  (uiop:with-temporary-file (:pathname path)
+    (with-output-stream-to-file (sink path)
+      (finishes (http-get (test-url "/ok") :output sink)))
+    (is (string= "ok" (file-contents path))))
+  (uiop:with-temporary-file (:pathname path)
+    (with-output-stream-to-file (sink path)
+      (finishes (http-get (test-url "/ok") :output sink :retry nil)))
+    (is (string= "ok" (file-contents path)))))
+
+(test retry-streamed-accepts-the-repeated-delivery-deliberately
+  ;; The opt-out.  What it buys is the old behaviour, and the test asserts the
+  ;; thing that made it worth refusing by default: the consumer really does see
+  ;; the failed attempt's body followed by the successful one's.
+  (reset-flaky "retry-streamed-optin")
+  (let ((chunks '()))
+    (let ((response (http-get (test-url "/flaky?id=retry-streamed-optin&fail=1")
+                              :on-data (lambda (octets)
+                                         (push (body-string octets) chunks))
+                              :retry '(:max-attempts 3 :initial-delay 0.01)
+                              :retry-streamed t)))
+      (is (= 200 (response-status response))))
+    (let ((delivered (apply #'concatenate 'string (reverse chunks))))
+      (is (search "failing" delivered)
+          "the failed attempt's body should still have been delivered")
+      (is (search "succeeded on attempt 2" delivered)))))
+
+(test the-batch-checks-every-request-before-starting-any
+  ;; One unreplayable request fails the whole call rather than corrupting its
+  ;; own destination partway through, and the good requests alongside it are
+  ;; never started -- there is nothing to half-finish.
+  (uiop:with-temporary-file (:pathname path)
+    (with-output-stream-to-file (sink path)
+      (signals unsafe-retry
+        (request-many (list (test-url "/ok")
+                            (list (test-url "/ok") :output sink))
+                      :retry 3)))))
+
+(test the-batch-retries-onto-a-pathname-correctly
+  (reset-flaky "retry-many-path")
+  (uiop:with-temporary-file (:pathname path)
+    (delete-file path)
+    (let ((results (request-many
+                    (list (list (test-url "/flaky?id=retry-many-path&fail=2")
+                                :output path))
+                    :retry '(:max-attempts 5 :initial-delay 0.01))))
+      (is (= 200 (response-status (first results))))
+      (is (string= "succeeded on attempt 3" (file-contents path))))))
+
+(test a-batch-request-can-opt-in-individually
+  ;; :RETRY-STREAMED belongs to the request, not the batch, so one streamed
+  ;; request opting in does not quietly cover another that did not.
+  (uiop:with-temporary-file (:pathname allowed-path)
+    (uiop:with-temporary-file (:pathname refused-path)
+      (with-output-stream-to-file (allowed allowed-path)
+        (with-output-stream-to-file (refused refused-path)
+          (finishes
+            (request-many (list (list (test-url "/ok") :output allowed
+                                                       :retry-streamed t))
+                          :retry 2))
+          (signals unsafe-retry
+            (request-many (list (list (test-url "/ok") :output allowed
+                                                       :retry-streamed t)
+                                (list (test-url "/ok") :output refused))
+                          :retry 2)))))))

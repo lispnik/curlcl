@@ -123,6 +123,28 @@ Content-Length; when it cannot — a pipe, a generator — the body goes out
 chunked. A file also gets a seek callback, so libcurl can rewind it to repeat
 the request for a redirect or an authentication challenge.
 
+Streaming and `:retry` interact, because a retried transfer delivers its body
+from the beginning. Who owns the destination decides whether that is a problem:
+
+```lisp
+;; Fine: the pathname is ours, so each attempt reopens and truncates the file.
+(curl:download "https://example.com/big.iso" #p"/tmp/big.iso" :retry 3)
+
+;; Signals UNSAFE-RETRY: the stream is yours, and rewinding or truncating it is
+;; not this library's to do -- so the failed attempt's bytes would sit in front
+;; of the successful attempt's, with nothing to say so.
+(with-open-file (out #p"/tmp/big.iso" :direction :output
+                                      :element-type '(unsigned-byte 8))
+  (curl:http-get url :output out :retry 3))
+
+;; Retry it anyway, having said out loud that seeing part of the body twice is
+;; acceptable.
+(curl:http-get url :on-data #'process :retry 3 :retry-streamed t)
+```
+
+The refusal happens before the first attempt rather than on the retry that
+would have corrupted the file.
+
 ### Sessions
 
 A session pools easy handles over a share, so connections, DNS answers, TLS

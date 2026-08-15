@@ -213,6 +213,53 @@ this one\" and absent means \"use the batch policy\".  GETF collapses the two."
         when (eq present-key key) return value
         finally (return default)))
 
+(defun open-output (output)
+  "Resolve OUTPUT to (values stream close-thunk).
+
+A pathname or namestring is opened here, truncating whatever was there, and the
+returned thunk closes it.  That ownership is what makes retrying a streamed
+download safe: each attempt gets a freshly truncated file, so the bytes a failed
+attempt delivered are gone rather than sitting in front of the successful
+attempt's.  A stream belongs to its caller and is used as it is -- and cannot be
+retried onto, since rewinding and truncating someone else's stream is not ours
+to do; see UNSAFE-RETRY.
+
+Mirrors :INPUT, which has taken a pathname or a stream all along."
+  (etypecase output
+    (null (values nil (lambda ())))
+    (stream (values output (lambda ())))
+    ((or pathname string)
+     (let ((stream (open output :direction :output
+                                :element-type '(unsigned-byte 8)
+                                :if-exists :supersede
+                                :if-does-not-exist :create)))
+       (values stream (lambda () (ignore-errors (close stream))))))))
+
+(defun replayable-sink-p (output on-data)
+  "True when a retry can safely deliver the body again.
+
+The accumulating default is replayable because its buffer is replaced per
+attempt, and a pathname is replayable because the file is reopened and
+truncated per attempt.  A caller's stream and :ON-DATA are not: the bytes are
+already gone."
+  (cond (on-data nil)
+        ((null output) t)
+        ((streamp output) nil)
+        (t t)))
+
+(defun check-retry-is-replayable (policy options)
+  "Signal UNSAFE-RETRY if OPTIONS ask to retry a body that cannot be redelivered.
+
+Checked once, before the first attempt, rather than discovered on the retry
+that corrupts the file.  A policy that will never retry is not a contradiction,
+so it passes whatever the sink is."
+  (when (and policy (> (retry-max-attempts policy) 1)
+             (not (plist-value options :retry-streamed nil))
+             (not (replayable-sink-p (getf options :output)
+                                     (getf options :on-data))))
+    (error 'unsafe-retry :sink (if (getf options :on-data) :on-data :output)))
+  policy)
+
 (defun make-body-sink (handle output on-data)
   "Install a write callback and return a closure yielding the collected body.
 
@@ -261,7 +308,8 @@ transfer: it closes a file opened for :INPUT, which nothing else owns."
   ;; The upload is arranged before the method, because CURLOPT_UPLOAD selects
   ;; PUT and APPLY-METHOD has to override the method string without cancelling
   ;; the streaming body.
-  (let ((cleanup (if input (apply-input handle input input-size) (lambda ()))))
+  (let* ((input-cleanup (if input (apply-input handle input input-size) (lambda ())))
+         (cleanup input-cleanup))
    (apply-method handle method (and input t))
    (let ((implied-type (apply-content handle content multipart method
                                       (and input t)))
@@ -346,7 +394,13 @@ transfer: it closes a file opened for :INPUT, which nothing else owns."
                                             (octets-to-string octets
                                                               :encoding :latin-1)))
             t)))
-   (values (make-body-sink handle output on-data) cleanup)))
+   (multiple-value-bind (output-stream close-output) (open-output output)
+     (setf cleanup (lambda ()
+                     ;; The output is closed after the input, so a failure
+                     ;; closing one still closes the other.
+                     (unwind-protect (funcall input-cleanup)
+                       (funcall close-output))))
+     (values (make-body-sink handle output-stream on-data) cleanup))))
 
 (defun request (url &rest options
                 &key (method :get) headers content multipart input input-size
@@ -358,7 +412,7 @@ transfer: it closes a file opened for :INPUT, which nothing else owns."
                      http-version range referer
                      output on-data on-header on-progress on-retry
                      force-binary force-string
-                     retry session)
+                     retry retry-streamed session)
   "Perform an HTTP request and return a RESPONSE.
 
 Returns (values response status headers), so the common cases stay short:
@@ -375,7 +429,9 @@ Only transport failures signal.
                 has to fit in memory
   :MULTIPART    a list of part plists, sent through curl_mime
   :HEADERS      an alist, a plist, or a list of \"Name: value\" strings
-  :OUTPUT       a stream to write the body to as it arrives
+  :OUTPUT       where to write the body as it arrives: a pathname, which is
+                opened and truncated per attempt, or a stream, which is written
+                to as-is and cannot be combined with :RETRY -- see UNSAFE-RETRY
   :ON-DATA      a function called with each chunk, instead of accumulating
   :ON-HEADER    a function called with each response header line
   :ON-PROGRESS  a function called with (dltotal dlnow ultotal ulnow)
@@ -392,16 +448,24 @@ Only transport failures signal.
 Streaming is via :OUTPUT or :ON-DATA.  There is no lazy body stream, because
 the easy interface has already run the transfer to completion by the time
 REQUEST returns; pretending otherwise would be a stream that is really a
-buffer."
+buffer.
+
+Retrying and streaming interact, because a retried transfer delivers its body
+from the beginning.  With a pathname that is handled -- the file is reopened
+and truncated per attempt.  With a caller's stream or :ON-DATA it cannot be, so
+asking for both signals UNSAFE-RETRY rather than quietly delivering part of the
+body twice; :RETRY-STREAMED T says the repeated delivery is acceptable."
   (declare (ignorable headers content multipart timeout connect-timeout
                       follow-redirects max-redirects user-agent accept-encoding
                       basic-auth bearer-auth cookie-jar cookies proxy verify-ssl
                       ca-file verbose http-version range referer output on-data
-                      on-header on-progress input input-size fail-on-error))
-  (let ((policy (make-retry retry))
+                      on-header on-progress input input-size fail-on-error
+                      retry-streamed))
+  (let ((policy (check-retry-is-replayable (make-retry retry) options))
         (configure (loop for (key value) on options by #'cddr
                          unless (member key '(:retry :session :force-binary
-                                              :force-string :on-retry))
+                                              :force-string :on-retry
+                                              :retry-streamed))
                            append (list key value))))
     (with-retries (policy method :on-retry on-retry)
       (%request-once url configure
@@ -453,12 +517,12 @@ buffer."
 (defun download (url destination &rest options)
   "GET URL straight to DESTINATION, a pathname, without buffering it in memory.
 
-Returns the RESPONSE, whose body is empty because the bytes went to the file."
-  (with-open-file (stream destination :direction :output
-                                      :element-type '(unsigned-byte 8)
-                                      :if-exists :supersede
-                                      :if-does-not-exist :create)
-    (apply #'request url :output stream options)))
+Returns the RESPONSE, whose body is empty because the bytes went to the file.
+
+The pathname is passed on rather than opened here, so that :RETRY works: each
+attempt reopens and truncates the file, and a failed attempt's bytes cannot
+survive in front of a successful one's."
+  (apply #'request url :output destination options))
 
 ;;; Many at once --------------------------------------------------------------
 
@@ -490,12 +554,13 @@ when its delay expires; nothing blocks on anything else's recovery.  That is
 the whole difficulty of retrying inside a batch, and the reason this is a loop
 of its own rather than a call to RUN-TRANSFERS.
 
-One caveat worth stating plainly: a retried request delivers its body from the
-beginning.  With the default buffering that is invisible, because the buffer is
-replaced for each attempt.  With :OUTPUT or :ON-DATA it is not -- the consumer
-will have already seen whatever the failed attempt managed to deliver, and will
-then see the whole of the successful one.  Retrying a streamed request is only
-safe if the consumer can tolerate that."
+A retried request delivers its body from the beginning, which the sink has to
+be able to absorb.  The accumulating default can, because its buffer is
+replaced per attempt, and an :OUTPUT pathname can, because the file is reopened
+and truncated per attempt.  A caller's stream and :ON-DATA cannot, so combining
+either with a retry signals UNSAFE-RETRY before anything starts -- rather than
+on the retry that would have corrupted the file.  :RETRY-STREAMED T on that
+request accepts the repeated delivery."
   (let ((count (length requests)))
     (if (zerop count)
         '()
@@ -526,7 +591,8 @@ safe if the consumer can tolerate that."
                  (transfer-options (options)
                    (loop for (key value) on options by #'cddr
                          unless (member key '(:retry :session :force-binary
-                                              :force-string :on-retry))
+                                              :force-string :on-retry
+                                              :retry-streamed))
                            append (list key value)))
                  (start (index)
                    (let ((handle (aref handles index)))
@@ -626,7 +692,13 @@ safe if the consumer can tolerate that."
                                       ;; to opt out of retrying -- which GETF
                                       ;; could not tell from not asking.
                                       (aref policies index)
-                                      (make-retry (plist-value options :retry retry)))
+                                      ;; Checked here, before anything starts,
+                                      ;; so a batch with one unreplayable
+                                      ;; request fails outright rather than
+                                      ;; corrupting that one halfway through.
+                                      (check-retry-is-replayable
+                                       (make-retry (plist-value options :retry retry))
+                                       options))
                                 (start index)))
                      (loop while (plusp outstanding)
                            do (multi-perform multi)

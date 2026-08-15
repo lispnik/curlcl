@@ -185,3 +185,32 @@ LOAD-LIBCURL with one."
 
 Signalled from conditions.lisp, which makes no foreign calls of its own, so
 this is reportable even though nothing else in the library can run."))
+
+(defgeneric unsafe-retry-sink (condition)
+  (:documentation
+   "Which streamed destination cannot be replayed: :OUTPUT or :ON-DATA."))
+
+(define-condition unsafe-retry (curl-condition error)
+  ((sink :initarg :sink :reader unsafe-retry-sink
+         :documentation "The option that made the request unreplayable."))
+  (:report (lambda (c s)
+             (format s "Refusing to retry a request whose body is streamed to ~
+a ~(~A~) this library does not own.~%~
+A retried transfer delivers its body from the beginning, so the consumer would ~
+see whatever the failed attempt managed to deliver and then the whole of the ~
+successful one.  Pass :OUTPUT a pathname instead -- the file is then reopened ~
+per attempt -- or pass :RETRY-STREAMED T to accept the repeated delivery."
+                     (unsafe-retry-sink c))))
+  (:documentation
+   "Retrying was asked for on a request whose body goes somewhere unrewindable.
+
+A retry re-runs the transfer from the start, and libcurl delivers the whole
+body again.  When the body is being accumulated that is invisible, because the
+buffer is replaced per attempt; when it is being written to a stream the caller
+supplied, or handed to :ON-DATA, it is not -- and the result is a corrupt file
+or a consumer that sees part of the body twice.
+
+Rather than pick one of those silently, the combination is refused.  Three
+things resolve it: give :OUTPUT a pathname, so this library owns the file and
+truncates it for each attempt; drop the retry; or pass :RETRY-STREAMED T to say
+the repeated delivery is acceptable."))
