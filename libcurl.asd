@@ -38,7 +38,7 @@ generic CURLE_WRITE_ERROR."
   :serial t
   ;; cffi-libffi is not optional: it is what makes the variadic setopt/getinfo
   ;; calls correct on stack-passing ABIs.  See src/varargs.lisp.
-  :depends-on (#:cffi #:cffi-libffi #:alexandria)
+  :depends-on (#:cffi #:cffi-libffi #:alexandria #:bordeaux-threads)
   :components ((:module "src"
                 :serial t
                 :components ((:file "package")
@@ -47,10 +47,13 @@ generic CURLE_WRITE_ERROR."
                              (:file "types")      ; ctypes, enums, structs
                              (:file "varargs")    ; the libffi variadic call layer
                              (:file "easy-raw")   ; raw bindings + option introspection
+                             (:file "memory")     ; owned foreign memory, octets
                              (:file "options")
                              (:file "options-table") ; generated
                              (:file "infos")
-                             (:file "infos-table")))) ; generated
+                             (:file "infos-table")   ; generated
+                             (:file "callbacks")  ; registry + trampolines
+                             (:file "easy"))))    ; the EASY-HANDLE class
   :in-order-to ((test-op (test-op #:libcurl/test))))
 
 (asdf:defsystem #:libcurl/generator
@@ -90,7 +93,9 @@ generic CURLE_WRITE_ERROR."
                              (:file "library-tests")
                              (:file "types-tests")
                              (:file "varargs-tests")
-                             (:file "tables-tests"))))
+                             (:file "tables-tests")
+                             (:file "server")     ; in-process HTTP fixture
+                             (:file "easy-tests"))))
   ;; ASDF ignores whatever a TEST-OP perform method returns, so reporting
   ;; failure by returning NIL would leave `asdf:test-system' -- and therefore
   ;; CI -- green on a suite that failed.  Signal.

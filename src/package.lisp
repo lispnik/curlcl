@@ -50,7 +50,51 @@
    #:unsupported-feature
    #:library-not-found
 
+   #:handle-closed
+
    ;; Error-code translation, exported because a caller handling an EASY-ERROR
    ;; often wants to compare against a keyword rather than a magic integer.
    #:curlcode-keyword
-   #:curlcode-value))
+   #:curlcode-value
+
+   ;; The easy handle.  WITH-EASY is the interface that should normally be
+   ;; used: there are no finalizers, so a handle dropped without CLOSE-HANDLE
+   ;; leaks a socket and a connection cache until the image exits.
+   #:easy-handle
+   #:make-easy-handle
+   #:close-handle
+   #:with-easy
+   #:handle-pointer
+   #:handle-closed-p
+   #:handle-error-buffer
+   #:handle-share
+   #:handle-from-pointer
+
+   ;; Driving a transfer.
+   #:setopt
+   #:setopts
+   #:getinfo
+   #:perform
+   #:reset-handle
+   #:duplicate-handle
+   #:pause-transfer
+   #:resume-transfer
+   #:url-escape
+   #:url-unescape
+
+   ;; Callbacks.  SETF of CALLBACK-FUNCTION installs a Lisp closure; the
+   ;; contract for each slot is on that function's documentation.
+   #:callback-function
+   #:callback-slot-names
+   #:live-callback-count
+
+   ;; Option and info introspection, for callers that want to ask what this
+   ;; libcurl supports before using it.
+   #:find-option
+   #:find-info
+   #:option-id
+   #:option-kind
+   #:option-deprecated
+   #:option-supported-p
+   #:info-id
+   #:info-kind))

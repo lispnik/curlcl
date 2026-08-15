@@ -35,7 +35,10 @@
   (replacement nil)
   (alias-of nil)
   ;; :UNKNOWN until the loaded libcurl has been asked; then T or NIL.
-  (availability :unknown))
+  (availability :unknown)
+  ;; Whether the deprecation warning has already been issued.  Its own slot
+  ;; rather than a sentinel in AVAILABILITY, which means something else.
+  (warned nil))
 
 (defvar *options* (make-hash-table :test 'eq)
   "Option keyword -> CURL-OPTION.")
@@ -107,7 +110,8 @@ for one the running libcurl lacks -- the report distinguishes them."
 Deliberately at use rather than at load: the table always contains every
 deprecated option, and warning about their mere existence would be noise."
   (when (and (option-deprecated option)
-             (not (eq :warned (option-availability option))))
+             (not (option-warned option)))
+    (setf (option-warned option) t)
     (warn "libcurl option ~S is deprecated as of ~A.~@[  ~A.~]"
           (option-keyword option)
           (option-deprecated option)

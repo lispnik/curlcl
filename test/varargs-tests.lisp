@@ -27,7 +27,10 @@
 (defconstant +info-private+         #x100015) ; STRING + 21
 (defconstant +info-effective-url+   #x100001) ; STRING + 1
 
-(defmacro with-easy ((var) &body body)
+;; Named distinctly from LIBCURL:WITH-EASY: this binds a bare CURL*, because
+;; these tests deliberately work below the EASY-HANDLE layer -- proving the ABI
+;; is a precondition for trusting anything built on top of it.
+(defmacro with-raw-handle ((var) &body body)
   `(libcurl::with-raw-easy (,var) ,@body))
 
 (test setopt-long-passes-the-exact-value
@@ -38,7 +41,7 @@
   ;; Three outcomes keyed on the exact integer is about as sharp a probe as
   ;; setopt offers: an argument read from the wrong place cannot sort itself
   ;; into a scattered eight-element set and two distinct error classes.
-  (with-easy (h)
+  (with-raw-handle (h)
     (dolist (accepted '(0 1 2 3 4 5 30 31))
       (is (eq :ok (curlcode-keyword (libcurl::%setopt-long h +opt-http-version+ accepted)))
           "CURLOPT_HTTP_VERSION ~D should be accepted" accepted))
@@ -53,7 +56,7 @@
   ;; The sign boundary is sharp where the upper bounds are not: libcurl clamps
   ;; large timeouts but rejects negative ones outright.  A truncated or
   ;; wrongly-widened argument shows up here as a sign flip.
-  (with-easy (h)
+  (with-raw-handle (h)
     (is (eq :ok (curlcode-keyword (libcurl::%setopt-long h +opt-timeout+ 0))))
     (is (eq :ok (curlcode-keyword (libcurl::%setopt-long h +opt-timeout+ 30))))
     (is (eq :bad-function-argument
@@ -67,7 +70,7 @@
   ;; CURLOPT_MAXFILESIZE_LARGE, so if the argument were truncated to 32 bits
   ;; and sign-extended this would come back CURLE_BAD_FUNCTION_ARGUMENT.
   ;; Accepting it proves the whole 64 bits crossed the boundary.
-  (with-easy (h)
+  (with-raw-handle (h)
     (is (eq :ok (curlcode-keyword
                  (libcurl::%setopt-off-t h +opt-maxfilesize-large+ #x180000000))))
     (is (eq :ok (curlcode-keyword
@@ -81,7 +84,7 @@
   ;; back, with no transfer in between -- so this isolates argument passing in
   ;; both directions.  The value is deliberately one with bits set in both
   ;; halves, so a 32-bit truncation anywhere shows up.
-  (with-easy (h)
+  (with-raw-handle (h)
     (let ((value (cffi:make-pointer #x00007F1234ABCD00)))
       (is (eq :ok (curlcode-keyword
                    (libcurl::%setopt-pointer h +opt-private+ value))))
@@ -95,7 +98,7 @@
   ;; void* was stored.  Decoding it as a string dereferences an arbitrary
   ;; pointer.  This test exists to pin that special case: the value stored here
   ;; is not a valid string pointer, and reading it as one would fault.
-  (with-easy (h)
+  (with-raw-handle (h)
     (let ((value (cffi:make-pointer 8)))
       (libcurl::%setopt-pointer h +opt-private+ value)
       (is (cffi:pointer-eq value
@@ -105,7 +108,7 @@
   ;; A string option that libcurl parses: a bad URL is rejected at setopt time
   ;; in modern libcurl, a good one accepted.  If the pointer never arrived,
   ;; libcurl would be parsing whatever the stack held.
-  (with-easy (h)
+  (with-raw-handle (h)
     (is (eq :ok (curlcode-keyword
                  (libcurl::%raw-setopt-string h +opt-url+ "https://example.com/"))))
     (multiple-value-bind (url code)
@@ -121,7 +124,7 @@
   ;; An option identifier libcurl does not have must come back as
   ;; CURLE_UNKNOWN_OPTION.  This also proves the option number itself is
   ;; arriving as the second fixed argument.
-  (with-easy (h)
+  (with-raw-handle (h)
     (is (eq :unknown-option
             (curlcode-keyword (libcurl::%setopt-long h 999999 1))))))
 
@@ -129,7 +132,7 @@
   ;; CURLINFO_LONG out-parameters are C `long', 8 bytes here.  Passing a 4-byte
   ;; buffer would let libcurl write over the adjacent word; this reads a known
   ;; info and checks the value is sane rather than sign-garbage.
-  (with-easy (h)
+  (with-raw-handle (h)
     (libcurl::%raw-setopt-string h +opt-url+ "https://example.com/")
     (multiple-value-bind (code result)
         (libcurl::%raw-getinfo-long h #x200002) ; CURLINFO_RESPONSE_CODE

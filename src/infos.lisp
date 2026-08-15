@@ -89,7 +89,7 @@ resolves slist-versus-pointer by name because the number cannot.")
 (defun info-count ()
   (hash-table-count *infos*))
 
-(defun getinfo (handle keyword)
+(defun %getinfo-typed (handle keyword)
   "Read KEYWORD from HANDLE, a raw CURL*.  Returns (values value code).
 
 Storage for the out-parameter is sized from the info's kind: a CURLINFO_LONG
@@ -107,7 +107,14 @@ mapping is made, so it is the single place it can be got wrong."
                  (setf (cffi:mem-ref out 'curl-socket-t) 0)
                  (let ((code (%getinfo handle (info-id info) out)))
                    (values (cffi:mem-ref out 'curl-socket-t) code))))
-      ;; Both of these hand back a pointer; the difference is ownership, which
-      ;; is the caller's problem and is documented per-info.  A :SLIST result
-      ;; must be released with curl_slist_free_all; a :POINTER must not be.
-      ((:pointer :slist) (%raw-getinfo-pointer handle (info-id info))))))
+      (:pointer (%raw-getinfo-pointer handle (info-id info)))
+      ;; An slist result is libcurl's to allocate and the caller's to free, so
+      ;; it is converted to a Lisp list and released here rather than handed
+      ;; out raw.  A :POINTER result, by contrast, must not be freed at all --
+      ;; which is the distinction the shared 0x400000 mask cannot express.
+      (:slist (multiple-value-bind (pointer code)
+                  (%raw-getinfo-pointer handle (info-id info))
+                (if (cffi:null-pointer-p pointer)
+                    (values nil code)
+                    (unwind-protect (values (slist-to-list pointer) code)
+                      (%curl-slist-free-all pointer))))))))

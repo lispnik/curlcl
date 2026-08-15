@@ -7,7 +7,7 @@
   (:export #:run-tests
            #:all-tests
            ;; Suites.
-           #:library #:types #:varargs #:tables))
+           #:library #:types #:varargs #:tables #:easy))
 
 (in-package #:libcurl/test)
 
@@ -28,6 +28,10 @@
 
 (def-suite tables
   :description "The generated option and info tables, against the loaded library."
+  :in all-tests)
+
+(def-suite easy
+  :description "The easy handle, moving real bytes against the local server."
   :in all-tests)
 
 (defun run-tests ()
