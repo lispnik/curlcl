@@ -158,7 +158,21 @@ package → conditions → library → types → varargs → easy-raw → memory
   /dev/fd fallback), and `force-gc` in the tests. ECL loads the library and
   performs requests, but the full suite stalls partway, so it is not in CI.
 
-- **Exported symbols collide with test helpers.** Three times a test-local
-  `defun` or `defmacro` silently redefined a newly exported library function
-  (`with-easy`, `header-value`, `response-header`). After adding to the export
-  list, re-run the whole suite, not just the new tests.
+- **Exported symbols collide with test helpers.** Four times a test-local
+  definition has landed on an exported library symbol, because `libcurl/test`
+  uses `#:libcurl`: `with-easy`, `header-value` and `response-header` were
+  redefined outright, and the test server's `(defstruct request …)` put a
+  structure class on `libcurl:request` — harmless-looking, since `defstruct`
+  does not define a function of that name, but it makes `(typep x 'request)`
+  mean something the library never intended. After adding to the export list,
+  re-run the whole suite, not just the new tests.
+
+- **Every exported definition needs a docstring, and a test enforces it.**
+  `every-exported-definition-is-documented` walks the export list and checks
+  each kind a symbol names separately. The gap it exists for is invisible
+  otherwise: a slot's `:documentation` documents the *slot*, while `describe`
+  and every documentation generator ask about the reader function, so a
+  carefully documented class can still have bare accessors. `defclass` and
+  `define-condition` readers get a `defgeneric` with `:documentation` ahead of
+  the class; `defstruct` accessors have nowhere to put one, so they take
+  `(setf (documentation '… 'function) …)` right after the struct.

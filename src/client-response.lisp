@@ -13,6 +13,61 @@
 
 (in-package #:libcurl)
 
+(defgeneric response-status (response)
+  (:documentation "The HTTP status code, as an integer."))
+
+(defgeneric response-body (response)
+  (:documentation
+   "The response body: octets, or a string when the charset was known.
+
+Empty when the body was streamed past rather than collected -- with :OUTPUT or
+:ON-DATA the bytes went straight to their destination and were never buffered.
+RESPONSE-SIZE-DOWNLOAD reports how many arrived in that case."))
+
+(defgeneric response-url (response)
+  (:documentation
+   "The effective URL, after any redirects -- CURLINFO_EFFECTIVE_URL.
+
+Not the URL that was requested: with :MAX-REDIRECTS greater than zero these
+differ, and it is this one the body actually came from."))
+
+(defgeneric response-version (response)
+  (:documentation
+   "The HTTP version the transfer used: :HTTP/1.0, :HTTP/1.1, :HTTP/2, :HTTP/3
+or NIL.
+
+What was negotiated, not what was asked for, so this is the way to find out
+whether an HTTP/2 request got HTTP/2."))
+
+(defgeneric response-request-method (response)
+  (:documentation
+   "The method the request used, as a keyword, or NIL.
+
+Kept on the response because a redirect can change it: libcurl turns a POST
+into a GET on a 301 or 302 unless told otherwise, so the method that fetched
+the body is not always the one that was asked for."))
+
+(defgeneric response-timings (response)
+  (:documentation
+   "A plist of microsecond timings from getinfo.
+
+Keys are :NAMELOOKUP, :CONNECT, :APPCONNECT, :PRETRANSFER, :STARTTRANSFER,
+:TOTAL and :REDIRECT.  These are libcurl's CURLINFO_*_TIME_T values, which are
+integer microseconds and not the older floating-point seconds."))
+
+(defgeneric response-redirect-count (response)
+  (:documentation "How many redirects were followed to reach this response."))
+
+(defgeneric response-size-download (response)
+  (:documentation
+   "Bytes of body received, from getinfo rather than from the body itself.
+
+The distinction matters exactly when the body was not kept: with :OUTPUT or
+:ON-DATA, (LENGTH (RESPONSE-BODY R)) is zero however much arrived."))
+
+(defgeneric response-size-upload (response)
+  (:documentation "Bytes of request body sent, from getinfo."))
+
 (defclass response ()
   ((status :initarg :status :reader response-status
            :documentation "The HTTP status code, as an integer.")
@@ -64,9 +119,16 @@
           collect (header-value header)))
 
 (defun response-content-type (response)
+  "The Content-Type header verbatim, or NIL -- parameters and all.
+
+Use PARSE-CONTENT-TYPE to split off the charset."
   (response-header-value response "content-type"))
 
 (defun successful-response-p (response)
+  "True when the status is 2xx.
+
+Only 2xx: a 304 is a useful answer but not a successful one, and treating 3xx
+as success would hide an unfollowed redirect."
   (<= 200 (response-status response) 299))
 
 ;;; Charset ------------------------------------------------------------------

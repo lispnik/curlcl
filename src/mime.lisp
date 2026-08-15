@@ -34,6 +34,16 @@
 (cffi:defcfun ("curl_mime_headers" %curl-mime-headers) :int
   (part :pointer) (headers :pointer) (take-ownership :int))
 
+(defgeneric mime-pointer (mime)
+  (:documentation "The raw curl_mime* this object wraps."))
+
+(defgeneric mime-freed-p (mime)
+  (:documentation
+   "True once the mime structure has been released.
+
+A mime belongs to the easy handle it was created from and is freed with it, so
+this can become true without FREE-MIME having been called directly."))
+
 (defclass mime ()
   ((pointer :initarg :pointer :reader mime-pointer)
    (handle :initarg :handle :reader mime-handle

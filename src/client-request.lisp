@@ -30,7 +30,12 @@ silence the wrong default.")
   "Seconds before a whole transfer is abandoned.  libcurl's own default is no
 limit at all, which turns one unlucky request into a hung program.")
 
-(defparameter *default-connect-timeout* 30)
+(defparameter *default-connect-timeout* 30
+  "Seconds allowed for connecting, when a request does not say.
+
+Separate from the overall :TIMEOUT, and deliberately bounded: libcurl's own
+default is 300 seconds, which in practice means a request to an unreachable
+host hangs for five minutes rather than failing.")
 
 (defun normalise-headers (headers)
   "Accept headers as an alist, a plist, or a list of \"Name: value\" strings.

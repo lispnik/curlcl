@@ -53,6 +53,12 @@
           (error 'curl-error :message (format nil "Unknown URL flag ~S." flag)))
         (setf value (logior value bit))))))
 
+(defgeneric url-pointer (url)
+  (:documentation "The raw CURLU* this object wraps."))
+
+(defgeneric url-closed-p (url)
+  (:documentation "True once CLOSE-URL has run."))
+
 (defclass url ()
   ((pointer :initarg :pointer :reader url-pointer)
    (closed-p :accessor url-closed-p :initform nil))
@@ -128,6 +134,10 @@ FLAGS are passed to MAKE-URL, so the parse can be relaxed the same way:
        (close-url ,var))))
 
 (defun duplicate-url (url)
+  "An independent copy of URL.  The caller closes it with CLOSE-URL.
+
+Cheaper than re-parsing, and the point of it is independence: changing a part
+of the copy leaves the original alone."
   (let ((pointer (%curl-url-dup (url-pointer url))))
     (when (cffi:null-pointer-p pointer)
       (error 'url-error :message "curl_url_dup returned NULL"))

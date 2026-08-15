@@ -39,6 +39,11 @@
   *libcurl-pathname*)
 
 (defun libcurl-loaded-p ()
+  "True when libcurl has been opened.
+
+Loading this system opens it, so this is normally T.  It answers NIL after
+LOAD-LIBCURL failed, and inside an image being dumped, where the library is
+closed deliberately so the restored image opens exactly one."
   (and *libcurl-pathname* t))
 
 (defun load-libcurl (&optional pathname)

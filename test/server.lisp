@@ -23,7 +23,13 @@
   (log '() :type list)
   (lock (bt:make-lock "test server log")))
 
-(defstruct (request (:conc-name request-))
+;;; Named SERVED-REQUEST rather than REQUEST because LIBCURL/TEST uses
+;;; #:LIBCURL, and LIBCURL:REQUEST is exported -- a DEFSTRUCT named REQUEST here
+;;; would define a structure class on the library's own exported symbol.  The
+;;; accessors keep the REQUEST- prefix, since those names collide with nothing.
+;;; This is the fourth time a test-local definition has landed on an exported
+;;; symbol; the documentation-coverage test is what caught it.
+(defstruct (served-request (:conc-name request-) (:constructor make-request))
   method path version headers body)
 
 (defvar *flaky-counts* (make-hash-table :test 'equal)

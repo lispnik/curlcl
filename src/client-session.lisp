@@ -19,6 +19,24 @@
 
 (in-package #:libcurl)
 
+(defgeneric session-share (session)
+  (:documentation
+   "The SHARE-HANDLE backing this session.
+
+Shares cookies, DNS, TLS sessions and the connection cache across every handle
+in the pool -- sharing CONNECT is what makes the pooling real rather than
+per-handle."))
+
+(defgeneric session-defaults (session)
+  (:documentation
+   "Options merged into every request made through this session.  SETFable.
+
+A request that names the same option wins; these are defaults, not
+overrides."))
+
+(defgeneric session-closed-p (session)
+  (:documentation "True once CLOSE-SESSION has run."))
+
 (defclass session ()
   ((share :reader session-share)
    (pool :initform '() :accessor session-pool

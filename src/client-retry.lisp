@@ -90,6 +90,12 @@ same lockstep by another route.")
   ;; server knows better than we do.
   (respect-retry-after t))
 
+(setf (documentation 'make-retry-policy 'function)
+      "Build a RETRY-POLICY from its slots.
+
+Usually reached through MAKE-RETRY instead, which also accepts an integer or a
+plist, so a request can say :RETRY 3 rather than constructing one of these.")
+
 (defun make-retry (specification)
   "Coerce SPECIFICATION into a RETRY-POLICY.
 

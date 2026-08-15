@@ -40,6 +40,23 @@
   ;; rather than a sentinel in AVAILABILITY, which means something else.
   (warned nil))
 
+;;; DEFSTRUCT has nowhere to put a docstring for the accessors it defines.
+(setf (documentation 'option-id 'function)
+      "The integer CURLOPT_* value, which is its type's base plus its ordinal."
+      (documentation 'option-kind 'function)
+      "The option's type as spelled in curl.h: :LONG, :VALUES, :STRINGPOINT,
+:OBJECTPOINT, :CBPOINT, :SLISTPOINT, :FUNCTIONPOINT, :OFF-T or :BLOB.
+
+Nine names over five numeric bases, and the spelling is what matters: the base
+cannot tell a string from an slist from a blob, and they differ in who owns the
+memory."
+      (documentation 'option-deprecated 'function)
+      "The libcurl version that deprecated this option, or NIL.
+
+Deprecation is warned about when the option is used, not when this table is
+loaded -- a warning at load time would fire for options the program never
+touches.")
+
 (defvar *options* (make-hash-table :test 'eq)
   "Option keyword -> CURL-OPTION.")
 

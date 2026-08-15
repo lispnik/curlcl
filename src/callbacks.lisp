@@ -566,6 +566,11 @@ buffer." (length octets) capacity))
       (error "No such libcurl callback: ~S" slot)))
 
 (defun callback-slot-names ()
+  "Every callback slot SETOPT accepts, as a list of keywords.
+
+The set the binding actually installs trampolines for -- :WRITE, :READ,
+:HEADER, :PROGRESS and the rest -- so it answers \"which callbacks are
+available\" without reading the source."
   (mapcar #'first *callback-options*))
 
 ;;; Registry state does not survive an image dump: the keys refer to closures

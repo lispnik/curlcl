@@ -28,6 +28,13 @@
 ;;; is sized to cover every value libcurl can pass.
 (defconstant +lock-data-count+ 8)
 
+(defgeneric share-pointer (share)
+  (:documentation
+   "The raw CURLSH* this handle wraps, for foreign calls made by hand."))
+
+(defgeneric share-closed-p (share)
+  (:documentation "True once CLOSE-SHARE has run."))
+
 (defclass share-handle ()
   ((pointer :initarg :pointer :reader share-pointer)
    (callbacks :reader share-callbacks :initform nil)

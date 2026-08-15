@@ -42,6 +42,21 @@
   (multi :pointer) (timeout :pointer))
 (cffi:defcfun ("curl_multi_socket_action" %curl-multi-socket-action) :int
   (multi :pointer) (socket curl-socket-t) (events :int) (running :pointer))
+(defgeneric multi-pointer (multi)
+  (:documentation
+   "The raw CURLM* this handle wraps, for foreign calls made by hand."))
+
+(defgeneric multi-transfers (multi)
+  (:documentation
+   "The easy handles currently added to this multi handle.  SETFable.
+
+Kept reachable deliberately: libcurl holds only the raw CURL*, so a handle
+collected while a transfer was in flight would leave libcurl reading freed
+memory."))
+
+(defgeneric multi-closed-p (multi)
+  (:documentation "True once CLOSE-MULTI has run."))
+
 (defclass multi-handle ()
   ((pointer :initarg :pointer :reader multi-pointer)
    (callbacks :reader multi-callbacks :initform nil)
@@ -190,7 +205,31 @@ be used instead."
   (code-name nil)
   (condition nil))
 
+;;; Documented here because DEFSTRUCT has nowhere to put a docstring for its
+;;; accessors, and these are exported.
+(setf (documentation 'result-handle 'function)
+      "The easy handle this result is for.
+
+Identity, not just information: with several transfers in flight this is what
+tells the caller which one finished, so anything they need alongside it should
+be in HANDLE-PLIST."
+      (documentation 'result-code 'function)
+      "The CURLcode this transfer finished with; zero is success."
+      (documentation 'result-code-name 'function)
+      "RESULT-CODE as a keyword, or the integer when this binding has no name
+for it."
+      (documentation 'result-condition 'function)
+      "The condition a callback signalled during this transfer, or NIL.
+
+A transfer can fail without libcurl having anything to say about it -- the
+callback's condition was caught at the boundary rather than unwinding into C,
+so this is where it comes back.")
+
 (defun result-successful-p (result)
+  "True when this transfer finished with CURLE_OK and no stashed condition.
+
+Both halves are needed: a callback that signalled is reported through
+RESULT-CONDITION, and libcurl's own code may still be zero when it happened."
   (and (zerop (result-code result)) (null (result-condition result))))
 
 (defun read-multi-messages (multi)
@@ -408,6 +447,12 @@ missing symbol fails with an undefined-alien error at the first call instead of
 being reportable up front.")
 
 (defun multi-waitfds-supported-p ()
+  "True when the loaded libcurl exports curl_multi_waitfds (8.8.0 or newer).
+
+Resolved at load time rather than declared with DEFCFUN, because a DEFCFUN
+against a symbol an older libcurl does not export fails at the first call
+instead of being reportable here.  libcurl 8.5.0, which is what Ubuntu ships,
+is one of those."
   (and *multi-waitfds-function*
        (not (cffi:null-pointer-p *multi-waitfds-function*))))
 
@@ -543,6 +588,8 @@ Requires libcurl 8.21.0 or newer."
   '((:info-read . 0) (:easy-done . 1)))
 
 (defun multi-notifications-supported-p ()
+  "True when the loaded libcurl exports curl_multi_notify_enable (8.21.0 or
+newer)."
   (and *multi-notify-enable-function*
        (not (cffi:null-pointer-p *multi-notify-enable-function*))))
 

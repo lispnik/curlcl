@@ -25,6 +25,43 @@
 
 (in-package #:libcurl)
 
+(defgeneric handle-pointer (handle)
+  (:documentation
+   "The raw CURL* this handle wraps.
+
+Exported for the sake of anything this binding does not cover: it is the value
+to pass to a foreign call made by hand.  Its lifetime is the handle's, so it
+must not outlive CLOSE-HANDLE."))
+
+(defgeneric handle-error-buffer (handle)
+  (:documentation
+   "The foreign CURLOPT_ERRORBUFFER attached to this handle, or NIL.
+
+Read through CURL-ERROR-DETAIL rather than directly; this exists because the
+buffer's lifetime is part of the handle's release order, which RESET-HANDLE
+also has to respect."))
+
+(defgeneric handle-plist (handle)
+  (:documentation
+   "Arbitrary Lisp data attached to this handle.  SETFable.
+
+CURLOPT_PRIVATE is not available for this -- the binding uses it to map a bare
+CURL* back to its handle -- so this is where callers put their own.  The multi
+interface makes it necessary rather than merely convenient: results arrive as
+bare handles, and the caller has to find whatever they set up alongside."))
+
+(defgeneric handle-share (handle)
+  (:documentation
+   "The SHARE-HANDLE this handle is attached to, or NIL.  SETFable.
+
+Held so the share cannot be collected or closed while a transfer is still
+using it."))
+
+(defgeneric handle-closed-p (handle)
+  (:documentation
+   "True once CLOSE-HANDLE has run.  Every operation checks it, so a use after
+close signals HANDLE-CLOSED rather than reaching libcurl with a dead CURL*."))
+
 (defclass easy-handle ()
   ((pointer :initarg :pointer :reader handle-pointer
             :documentation "The CURL*.")
@@ -57,10 +94,16 @@ it cannot be collected or closed out from under the transfer.")
                 (ignore-errors (getinfo (handle-pointer handle) :effective-url))))))
 
 (define-condition handle-closed (curl-error)
-  ((handle :initarg :handle :reader handle-closed-handle))
+  ((handle :initarg :handle :reader handle-closed-handle
+           :documentation "The handle that was used after being closed."))
   (:report (lambda (c s)
              (declare (ignore c))
-             (write-string "This libcurl handle has already been closed." s))))
+             (write-string "This libcurl handle has already been closed." s)))
+  (:documentation
+   "A handle was used after CLOSE-HANDLE.
+
+Signalled in preference to letting the call through: the CURL* has been freed
+by then, so libcurl would be reading memory it no longer owns."))
 
 (declaim (inline check-open))
 (defun check-open (handle)
@@ -447,6 +490,11 @@ the handle it came from."
   handle)
 
 (defun resume-transfer (handle)
+  "Unpause a transfer that a callback paused, and return HANDLE.
+
+curl_easy_pause with CURLPAUSE_CONT.  A write callback returning
+:PAUSE stops the transfer where it is; this is what starts it again.  Note that
+unpausing can deliver buffered data immediately, from inside this call."
   (check-open handle)
   (%check-easy (%curl-easy-pause (handle-pointer handle) +curlpause-cont+))
   handle)
@@ -486,6 +534,10 @@ not be valid text in any particular encoding."
   (cffi:foreign-symbol-pointer "curl_easy_ssls_import"))
 
 (defun tls-session-import-supported-p ()
+  "True when the loaded libcurl exports curl_easy_ssls_import (8.21.0 or newer).
+
+Resolved at load time rather than declared, so an older libcurl reports the
+absence here instead of failing at the first call."
   (and *ssls-import-function* (not (cffi:null-pointer-p *ssls-import-function*))))
 
 (defun import-tls-session (handle session-key shmac sdata)
@@ -523,6 +575,7 @@ along with the session key that identifies them.  Requires libcurl 8.21.0."
   (cffi:foreign-symbol-pointer "curl_easy_ssls_export"))
 
 (defun tls-session-export-supported-p ()
+  "True when the loaded libcurl exports curl_easy_ssls_export (8.21.0 or newer)."
   (and *ssls-export-function* (not (cffi:null-pointer-p *ssls-export-function*))))
 
 (cffi:defcallback %ssls-export-trampoline :int

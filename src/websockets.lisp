@@ -35,6 +35,19 @@
   (bytes-left 0)
   (length 0))
 
+(setf (documentation 'frame-flags 'function)
+      "What kind of frame this is, as a list of keywords: :TEXT, :BINARY,
+:CONTINUATION, :CLOSE, :PING, :PONG, :OFFSET."
+      (documentation 'frame-offset 'function)
+      "Where this piece starts within the frame being assembled."
+      (documentation 'frame-bytes-left 'function)
+      "How many bytes of this frame have yet to arrive.
+
+Non-zero means the frame is incomplete and WS-RECEIVE should be called again;
+a frame larger than the receive buffer arrives over several calls."
+      (documentation 'frame-length 'function)
+      "The total size of the frame this piece belongs to.")
+
 (defun websockets-supported-p ()
   "True when the loaded libcurl can actually speak ws:// and wss://.
 
@@ -189,6 +202,10 @@ reason."
   (cffi:foreign-symbol-pointer "curl_ws_start_frame"))
 
 (defun ws-start-frame-supported-p ()
+  "True when the loaded libcurl exports curl_ws_start_frame (8.21.0 or newer).
+
+Separate from WEBSOCKETS-SUPPORTED-P: a libcurl can have websockets and still
+lack this call, which is the newer way to begin a frame of known length."
   (and *ws-start-frame-function*
        (not (cffi:null-pointer-p *ws-start-frame-function*))))
 

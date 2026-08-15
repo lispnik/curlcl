@@ -30,6 +30,27 @@
   (index 0 :type integer)
   (origin '() :type list))
 
+;;; DEFSTRUCT has nowhere to put a docstring for the accessors it defines, and
+;;; these are exported, so they are documented here rather than left bare.
+(setf (documentation 'header-name 'function)
+      "The header's name, as libcurl parsed it."
+      (documentation 'header-value 'function)
+      "The header's value, with surrounding whitespace already stripped."
+      (documentation 'header-amount 'function)
+      "How many headers in this response share this name.
+
+Greater than one for Set-Cookie, which legitimately repeats, and for any other
+header a server chose to send twice."
+      (documentation 'header-index 'function)
+      "Which of the HEADER-AMOUNT headers of this name this one is, from zero."
+      (documentation 'header-origin 'function)
+      "Where the header came from, as a list of keywords.
+
+:HEADER for an ordinary response header, :TRAILER for one after a chunked
+body, :CONNECT for one from a proxy's CONNECT response, :1XX for an
+informational response.  A request that goes through a proxy has headers of
+more than one origin, and they are not interchangeable.")
+
 (defparameter *header-origins*
   '((:header . #.(ash 1 0))
     (:trailer . #.(ash 1 1))

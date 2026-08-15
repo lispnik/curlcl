@@ -54,6 +54,17 @@ resolves slist-versus-pointer by name because the number cannot.")
   (c-name "" :type string)
   (deprecated nil))
 
+(setf (documentation 'info-id 'function)
+      "The integer CURLINFO_* value; its type is encoded in the high bits."
+      (documentation 'info-kind 'function)
+      "The info's result type: :STRING, :LONG, :DOUBLE, :SLIST, :POINTER,
+:SOCKET or :OFF-T.
+
+Resolved by the generator rather than masked off the id at runtime, because the
+id does not always say: CURLINFO_SLIST and CURLINFO_PTR are the same value, and
+CURLINFO_PRIVATE is typed STRING but returns a bare pointer -- decoding that as
+a string would dereference whatever the caller stored.")
+
 (defvar *infos* (make-hash-table :test 'eq)
   "Info keyword -> CURL-INFO.")
 

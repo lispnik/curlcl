@@ -83,3 +83,44 @@
     (is (stringp ok))
     (is (stringp timeout))
     (is (string/= ok timeout))))
+
+(defun definition-kinds (symbol)
+  "Every kind of definition SYMBOL names, as a list of keywords.
+
+A symbol can name more than one -- a class and a function, say -- and each is
+documented separately, so each has to be checked separately."
+  (let ((kinds '()))
+    (let ((function (and (fboundp symbol) (ignore-errors (fdefinition symbol)))))
+      (cond ((macro-function symbol) (push :macro kinds))
+            ((typep function 'generic-function) (push :generic kinds))
+            (function (push :function kinds))))
+    (when (find-class symbol nil) (push :class kinds))
+    (when (boundp symbol)
+      (push (if (constantp symbol) :constant :variable) kinds))
+    kinds))
+
+(defun definition-documentation (symbol kind)
+  (ecase kind
+    ((:function :generic :macro) (documentation symbol 'function))
+    (:class (documentation (find-class symbol) t))
+    ((:variable :constant) (documentation symbol 'variable))))
+
+(test every-exported-definition-is-documented
+  ;; The export list is the API, and an undocumented export is a symbol whose
+  ;; meaning lives only in the source.  This is a test rather than a habit
+  ;; because the gap is invisible: adding a slot with a :READER exports a
+  ;; generic function whose documentation is not the slot's :DOCUMENTATION --
+  ;; DESCRIBE and every documentation generator look at the function -- so a
+  ;; carefully documented class can still leave its accessors bare.
+  (let ((undocumented '())
+        (checked 0))
+    (do-external-symbols (symbol :libcurl)
+      (dolist (kind (definition-kinds symbol))
+        (incf checked)
+        (unless (definition-documentation symbol kind)
+          (push (list kind symbol) undocumented))))
+    (is (plusp checked))
+    (is (null undocumented)
+        "~D exported definition~:P without documentation:~{~%  ~{~A ~A~}~}"
+        (length undocumented)
+        (sort undocumented #'string< :key #'second))))

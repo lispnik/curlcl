@@ -17,6 +17,36 @@
   ()
   (:documentation "Root of every condition this library signals."))
 
+;;; The readers are declared before the conditions that supply their methods so
+;;; that each carries its own documentation.  A slot's :DOCUMENTATION describes
+;;; the slot and is not what DESCRIBE or a documentation generator finds when
+;;; asked about the function.
+
+(defgeneric curl-error-code (condition)
+  (:documentation
+   "The integer result code libcurl returned, or NIL if the failure did not
+come from a libcurl call.  Kept as an integer rather than only a keyword
+because a libcurl newer than this binding can return a code it has no name
+for."))
+
+(defgeneric curl-error-code-name (condition)
+  (:documentation
+   "CURL-ERROR-CODE as a keyword -- :OPERATION-TIMEDOUT, :COULDNT-RESOLVE-HOST
+-- or the integer unchanged when this binding has no name for it."))
+
+(defgeneric curl-error-message (condition)
+  (:documentation
+   "libcurl's own one-line description of the result code, from
+curl_easy_strerror and its siblings.  Generic by nature: it describes the code,
+not the transfer.  Prefer CURL-ERROR-DETAIL when there is one."))
+
+(defgeneric curl-error-detail (condition)
+  (:documentation
+   "The text libcurl wrote to CURLOPT_ERRORBUFFER for this transfer, or NIL.
+
+Far more specific than CURL-ERROR-MESSAGE -- it names the host, file or
+certificate at fault -- which is why the report methods prefer it."))
+
 (define-condition curl-error (curl-condition error)
   ((code :initarg :code :initform nil :reader curl-error-code
          :documentation "The integer result code from libcurl, or NIL.")
@@ -50,24 +80,52 @@ fault -- so reports prefer it."))
 
 (define-condition multi-error (curl-error)
   ()
-  (:report (lambda (c s) (%report-curl-error c s "libcurl multi call failed"))))
+  (:report (lambda (c s) (%report-curl-error c s "libcurl multi call failed")))
+  (:documentation
+   "A CURLMcode failure from the multi interface.
+
+Its codes are a different family from CURLcode with their own numbering, so the
+class is distinct rather than the code being folded into EASY-ERROR."))
 
 (define-condition share-error (curl-error)
   ()
-  (:report (lambda (c s) (%report-curl-error c s "libcurl share call failed"))))
+  (:report (lambda (c s) (%report-curl-error c s "libcurl share call failed")))
+  (:documentation "A CURLSHcode failure from the share interface."))
 
 (define-condition url-error (curl-error)
   ((url :initarg :url :initform nil :reader curl-error-url))
   (:report (lambda (c s)
              (%report-curl-error c s "libcurl URL call failed")
              (when (curl-error-url c)
-               (format s " (~S)" (curl-error-url c))))))
+               (format s " (~S)" (curl-error-url c)))))
+  (:documentation
+   "A CURLUcode failure from the URL parser.
+
+Signalled for input libcurl cannot parse.  A URL that merely lacks a component
+is not this: URL-PART answers NIL for a missing port or query, since that is a
+fact about the URL rather than a failure to read it."))
 
 ;;; libcurl has no curl_header_strerror, unlike every other code family, so
 ;;; MESSAGE here is filled from a table this library maintains by hand.
 (define-condition header-error (curl-error)
   ()
-  (:report (lambda (c s) (%report-curl-error c s "libcurl header call failed"))))
+  (:report (lambda (c s) (%report-curl-error c s "libcurl header call failed")))
+  (:documentation
+   "A CURLHcode failure from the header API.
+
+CURL-ERROR-MESSAGE comes from a table maintained by hand in headers.lisp, since
+libcurl ships no curl_header_strerror to ask."))
+
+(defgeneric callback-error-cause (condition)
+  (:documentation
+   "The condition the user's callback actually signalled.
+
+The point of the wrapper: without it the caller would see libcurl's
+CURLE_WRITE_ERROR and not the FILE-ERROR that caused it."))
+
+(defgeneric callback-error-kind (condition)
+  (:documentation
+   "Which callback signalled -- :WRITE, :READ, :PROGRESS and so on -- or NIL."))
 
 (define-condition callback-error (curl-error)
   ((cause :initarg :cause :reader callback-error-cause
@@ -82,6 +140,9 @@ fault -- so reports prefer it."))
    "Signalled after a transfer whose callback signalled a Lisp condition.  The
 transfer was aborted at the callback boundary rather than allowing a non-local
 exit to unwind into C.  CALLBACK-ERROR-CAUSE holds the original condition."))
+
+(defgeneric unsupported-option-name (condition)
+  (:documentation "The option keyword the loaded libcurl does not have."))
 
 (define-condition unsupported-option (curl-error)
   ((name :initarg :name :reader unsupported-option-name
@@ -98,16 +159,29 @@ option ~S."
 report names the option and the version that lacks it."))
 
 (define-condition unsupported-feature (curl-error)
-  ((name :initarg :name :reader unsupported-feature-name))
+  ((name :initarg :name :reader unsupported-feature-name
+         :documentation "What is missing, as text fit to print in a report."))
   (:report (lambda (c s)
              (format s "The loaded libcurl was built without ~A."
-                     (unsupported-feature-name c)))))
+                     (unsupported-feature-name c))))
+  (:documentation
+   "The loaded libcurl was built without something the call needs.
+
+A property of the build rather than of the version: the same libcurl release
+may or may not have websockets, HTTP/3 or a given TLS backend, so this is
+raised from a runtime feature check rather than a version comparison."))
 
 (define-condition library-not-found (curl-error)
   ((candidates :initarg :candidates :initform nil
-               :reader library-not-found-candidates))
+               :reader library-not-found-candidates
+               :documentation "The names and paths that were tried, in order."))
   (:report (lambda (c s)
              (format s "Could not load libcurl.~@[  Tried: ~{~A~^, ~}.~]~
 ~%Set the LIBCURL_LIBRARY environment variable to an explicit path, or call ~
 LOAD-LIBCURL with one."
-                     (library-not-found-candidates c)))))
+                     (library-not-found-candidates c))))
+  (:documentation
+   "No libcurl could be opened at all.
+
+Signalled from conditions.lisp, which makes no foreign calls of its own, so
+this is reportable even though nothing else in the library can run."))
