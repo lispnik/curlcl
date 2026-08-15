@@ -14,7 +14,7 @@
 (in-package #:curlcl/test)
 
 (def-suite all-tests
-  :description "Every libcurl test.")
+  :description "Every curlcl test.")
 
 (def-suite library
   :description "Loading libcurl, and what the loaded library reports about itself."
@@ -102,7 +102,7 @@ no portable way to ask."
   #-(or sbcl ecl ccl clasp abcl allegro lispworks) nil)
 
 (defun run-tests ()
-  "Run every libcurl test.  Returns true when they all pass."
+  "Run every curlcl test.  Returns true when they all pass."
   (let ((results (run 'all-tests)))
     (explain! results)
     (results-status results)))

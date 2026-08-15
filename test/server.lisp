@@ -381,8 +381,8 @@ Content-Length: ~D~C~C~C~C"
              (accept-loop listener
                           (lambda () (server-running server))
                           (lambda (socket) (serve-connection server socket))
-                          "libcurl test connection"))
-           :name "libcurl test server"))
+                          "curlcl test connection"))
+           :name "curlcl test server"))
     server))
 
 (defun stop-test-server (server)

@@ -217,9 +217,9 @@ Sec-WebSocket-Accept: ~A~C~C~C~C"
                    do (handler-case
                           (let ((socket (usocket:socket-accept listener)))
                             (bt:make-thread (lambda () (serve-websocket socket))
-                                            :name "libcurl ws connection"))
+                                            :name "curlcl ws connection"))
                         (error () (return)))))
-           :name "libcurl ws server"))
+           :name "curlcl ws server"))
     server))
 
 (defun stop-ws-server (server)

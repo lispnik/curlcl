@@ -41,7 +41,7 @@
    (locks :reader share-locks
           :initform (coerce (loop for i below +lock-data-count+
                                   collect (bt:make-lock
-                                           (format nil "libcurl share ~D" i)))
+                                           (format nil "curlcl share ~D" i)))
                             'vector))
    (closed-p :accessor share-closed-p :initform nil))
   (:documentation "A CURLSH*, shared state for a group of easy handles."))

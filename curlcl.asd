@@ -103,7 +103,7 @@ convenient to expose."
   :entry-point "curlcl/cli:main")
 
 (asdf:defsystem #:curlcl/generator
-  :description "Generates libcurl's option and info tables from the curl headers."
+  :description "Generates curlcl's option and info tables from the libcurl headers."
   :author "Matthew Kennedy <burnsidemk@gmail.com>"
   :maintainer "Matthew Kennedy <burnsidemk@gmail.com>"
   :mailto "burnsidemk@gmail.com"
@@ -162,4 +162,4 @@ convenient to expose."
   :perform (test-op (o c)
              (declare (ignore o c))
              (unless (uiop:symbol-call :curlcl/test '#:run-tests)
-               (error "The libcurl test suite failed."))))
+               (error "The curlcl test suite failed."))))

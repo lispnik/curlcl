@@ -60,7 +60,7 @@ dumped executable, so every process started from that binary -- and every copy
 of it on a fleet -- would draw the identical backoff sequence, which is the
 same lockstep by another route.")
 
-(defvar *jitter-lock* (bt:make-lock "libcurl retry jitter"))
+(defvar *jitter-lock* (bt:make-lock "curlcl retry jitter"))
 
 (defun %reseed-jitter ()
   (setf *jitter-random-state* (make-random-state t)))

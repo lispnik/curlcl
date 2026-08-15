@@ -105,7 +105,7 @@
 (live-test a-real-websocket-echoes
   (if (websockets-supported-p)
       (with-websocket (handle "wss://echo.websocket.org/")
-        (ws-send-text handle "hello from libcurl")
+        (ws-send-text handle "hello from curlcl")
         (let ((reply (loop repeat 600
                            do (multiple-value-bind (octets frame) (ws-receive handle)
                                 (declare (ignore frame))

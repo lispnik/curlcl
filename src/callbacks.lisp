@@ -46,7 +46,7 @@
   "Key -> CALLBACK-STATE.  Replaced wholesale on growth; never mutated in a way
 that would invalidate a reader holding an earlier vector.")
 
-(defvar *callback-lock* (bt:make-lock "libcurl callback registry"))
+(defvar *callback-lock* (bt:make-lock "curlcl callback registry"))
 
 (defvar *callback-free-keys* '()
   "Released keys, for reuse.  Guarded by *CALLBACK-LOCK*.")

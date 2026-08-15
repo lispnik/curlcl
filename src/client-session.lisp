@@ -41,7 +41,7 @@ overrides."))
   ((share :reader session-share)
    (pool :initform '() :accessor session-pool
          :documentation "Idle handles, ready to be reset and reused.")
-   (lock :initform (bt:make-lock "libcurl session pool") :reader session-lock)
+   (lock :initform (bt:make-lock "curlcl session pool") :reader session-lock)
    (max-idle :initarg :max-idle :reader session-max-idle
              :documentation "How many idle handles to keep; beyond this,
 released handles are closed rather than pooled.")

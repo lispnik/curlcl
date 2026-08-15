@@ -110,8 +110,8 @@ bypassed."
              (accept-loop listener
                           (lambda () (proxy-running proxy))
                           (lambda (socket) (serve-proxy-connection proxy socket))
-                          "libcurl test proxy connection"))
-           :name "libcurl test proxy"))
+                          "curlcl test proxy connection"))
+           :name "curlcl test proxy"))
     proxy))
 
 (defun stop-test-proxy (proxy)
