@@ -12,7 +12,7 @@
 ;;;; again" -- and POST and PATCH are excluded unless the caller says
 ;;;; otherwise, because only they know whether their endpoint is idempotent.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 (defparameter *retryable-codes*
   '(:couldnt-connect

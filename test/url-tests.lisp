@@ -1,6 +1,6 @@
 ;;;; test/url-tests.lisp — libcurl's URL parser.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (in-suite url)
 

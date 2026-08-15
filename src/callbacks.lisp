@@ -38,7 +38,7 @@
 ;;;; per chunk to defend against a situation libcurl does not create: it never
 ;;;; invokes a user callback from its own resolver threads.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 ;;; The registry --------------------------------------------------------------
 

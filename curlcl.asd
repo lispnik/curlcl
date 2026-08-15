@@ -1,18 +1,18 @@
-;;;; libcurl.asd
+;;;; curlcl.asd
 ;;;;
-;;;; Three systems.  #:libcurl is the binding and the HTTP client built on it.
-;;;; #:libcurl/generator is a build-time tool that parses the installed curl
+;;;; Four systems.  #:curlcl is the binding and the HTTP client built on it.
+;;;; #:curlcl/generator is a build-time tool that parses the installed curl
 ;;;; headers and emits src/options-table.lisp and src/infos-table.lisp; those
 ;;;; files are committed, so the generator is never needed to build or use the
-;;;; library, and it deliberately does not depend on #:libcurl.
-;;;; #:libcurl/cli builds bin/curlcl, a curl-compatible driver, with ASDF's
-;;;; program-op -- `make build', or (asdf:make :libcurl/cli).
-;;;; #:libcurl/test is the FiveAM suite.  It runs an HTTP server and a
+;;;; library, and it deliberately does not depend on #:curlcl.
+;;;; #:curlcl/cli builds bin/curlcl, a curl-compatible driver, with ASDF's
+;;;; program-op -- `make build', or (asdf:make :curlcl/cli).
+;;;; #:curlcl/test is the FiveAM suite.  It runs an HTTP server and a
 ;;;; websocket echo server inside the image, so the integration tests are
 ;;;; hermetic; the one suite that uses the real network is skipped unless
 ;;;; CURL_LIVE_TESTS is set.
 
-(asdf:defsystem #:libcurl
+(asdf:defsystem #:curlcl
   :description "A comprehensive, idiomatic Common Lisp binding to libcurl."
   :long-description
   "Complete coverage of the libcurl C API -- the easy interface with all of its
@@ -37,9 +37,9 @@ generic CURLE_WRITE_ERROR."
   :mailto "burnsidemk@gmail.com"
   :license "MIT"
   :version "0.1.0"
-  :homepage "https://github.com/lispnik/libcurl"
-  :source-control (:git "https://github.com/lispnik/libcurl.git")
-  :bug-tracker "https://github.com/lispnik/libcurl/issues"
+  :homepage "https://github.com/lispnik/curlcl"
+  :source-control (:git "https://github.com/lispnik/curlcl.git")
+  :bug-tracker "https://github.com/lispnik/curlcl/issues"
   :serial t
   ;; cffi-libffi is not optional: it is what makes the variadic setopt/getinfo
   ;; calls correct on stack-passing ABIs.  See src/varargs.lisp.
@@ -71,9 +71,9 @@ generic CURLE_WRITE_ERROR."
                              (:file "client-session") ; before client-request:
                                         ; WITH-SESSION-HANDLE is a macro
                              (:file "client-request"))))
-  :in-order-to ((test-op (test-op #:libcurl/test))))
+  :in-order-to ((test-op (test-op #:curlcl/test))))
 
-(asdf:defsystem #:libcurl/cli
+(asdf:defsystem #:curlcl/cli
   :description "curlcl, a curl-compatible command-line driver for libcurl."
   :long-description
   "A working curl(1) workalike rather than a demo: option names, defaults,
@@ -87,33 +87,33 @@ convenient to expose."
   :mailto "burnsidemk@gmail.com"
   :license "MIT"
   :version "0.1.0"
-  :homepage "https://github.com/lispnik/libcurl"
-  :source-control (:git "https://github.com/lispnik/libcurl.git")
-  :bug-tracker "https://github.com/lispnik/libcurl/issues"
+  :homepage "https://github.com/lispnik/curlcl"
+  :source-control (:git "https://github.com/lispnik/curlcl.git")
+  :bug-tracker "https://github.com/lispnik/curlcl/issues"
   :serial t
-  :depends-on (#:libcurl #:clingon #:alexandria)
+  :depends-on (#:curlcl #:clingon #:alexandria)
   :components ((:module "src"
                 :components ((:file "cli"))))
-  ;; Build with (asdf:make :libcurl/cli), producing bin/curlcl.  The dumped
+  ;; Build with (asdf:make :curlcl/cli), producing bin/curlcl.  The dumped
   ;; image reopens libcurl and re-prepares the libffi cifs through the restore
   ;; hooks in src/library.lisp and src/varargs.lisp; without those the binary
   ;; would start with a stale library handle and mis-pass every option.
   :build-operation "program-op"
   :build-pathname "bin/curlcl"
-  :entry-point "libcurl/cli:main")
+  :entry-point "curlcl/cli:main")
 
-(asdf:defsystem #:libcurl/generator
+(asdf:defsystem #:curlcl/generator
   :description "Generates libcurl's option and info tables from the curl headers."
   :author "Matthew Kennedy <burnsidemk@gmail.com>"
   :maintainer "Matthew Kennedy <burnsidemk@gmail.com>"
   :mailto "burnsidemk@gmail.com"
   :license "MIT"
   :version "0.1.0"
-  :homepage "https://github.com/lispnik/libcurl"
-  :source-control (:git "https://github.com/lispnik/libcurl.git")
-  :bug-tracker "https://github.com/lispnik/libcurl/issues"
+  :homepage "https://github.com/lispnik/curlcl"
+  :source-control (:git "https://github.com/lispnik/curlcl.git")
+  :bug-tracker "https://github.com/lispnik/curlcl/issues"
   :serial t
-  ;; Deliberately does NOT depend on #:libcurl: it is a text-processing tool
+  ;; Deliberately does NOT depend on #:curlcl: it is a text-processing tool
   ;; that writes two of that system's source files, so requiring the system it
   ;; generates for would be circular the first time it is run.
   :depends-on (#:cl-ppcre #:alexandria)
@@ -121,18 +121,18 @@ convenient to expose."
                 :serial t
                 :components ((:file "generate-tables")))))
 
-(asdf:defsystem #:libcurl/test
-  :description "Tests for libcurl."
+(asdf:defsystem #:curlcl/test
+  :description "Tests for curlcl."
   :author "Matthew Kennedy <burnsidemk@gmail.com>"
   :maintainer "Matthew Kennedy <burnsidemk@gmail.com>"
   :mailto "burnsidemk@gmail.com"
   :license "MIT"
   :version "0.1.0"
-  :homepage "https://github.com/lispnik/libcurl"
-  :source-control (:git "https://github.com/lispnik/libcurl.git")
-  :bug-tracker "https://github.com/lispnik/libcurl/issues"
+  :homepage "https://github.com/lispnik/curlcl"
+  :source-control (:git "https://github.com/lispnik/curlcl.git")
+  :bug-tracker "https://github.com/lispnik/curlcl/issues"
   :serial t
-  :depends-on (#:libcurl #:libcurl/cli #:fiveam #:usocket #:bordeaux-threads)
+  :depends-on (#:curlcl #:curlcl/cli #:fiveam #:usocket #:bordeaux-threads)
   :components ((:module "test"
                 :serial t
                 :components ((:file "package")
@@ -161,5 +161,5 @@ convenient to expose."
   ;; CI -- green on a suite that failed.  Signal.
   :perform (test-op (o c)
              (declare (ignore o c))
-             (unless (uiop:symbol-call :libcurl/test '#:run-tests)
+             (unless (uiop:symbol-call :curlcl/test '#:run-tests)
                (error "The libcurl test suite failed."))))

@@ -1,6 +1,6 @@
 ;;;; test/mime-tests.lisp — multipart bodies.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (in-suite mime)
 
@@ -80,10 +80,10 @@
     (unwind-protect
          (progn
            (set-mime-body handle '((:name "a" :data "b")))
-           (is (find :mime (libcurl::resources-items (libcurl::handle-resources handle))
+           (is (find :mime (curlcl::resources-items (curlcl::handle-resources handle))
                      :key #'car)))
       (close-handle handle))
-    (is (null (libcurl::resources-items (libcurl::handle-resources handle))))))
+    (is (null (curlcl::resources-items (curlcl::handle-resources handle))))))
 
 (test nested-subparts-are-adopted-by-their-parent
   ;; libcurl takes ownership of a mime attached as subparts, so the binding
@@ -93,8 +93,8 @@
            (outer (make-mime handle)))
       (add-mime-part inner :name "inner-field" :data "inner-value")
       (add-mime-part outer :name "nested" :subparts inner)
-      (is (libcurl::mime-freed-p inner)
+      (is (curlcl::mime-freed-p inner)
           "the adopted mime is still tracked for release")
       ;; Only the outer mime remains in the handle's resource list.
-      (is (= 1 (count :mime (libcurl::resources-items (libcurl::handle-resources handle))
+      (is (= 1 (count :mime (curlcl::resources-items (curlcl::handle-resources handle))
                       :key #'car))))))

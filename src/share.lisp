@@ -13,7 +13,7 @@
 ;;;; because the cookie jar and the connection cache are contended by different
 ;;;; work and there is no reason to serialise them against each other.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 (cffi:defcfun ("curl_share_init" %curl-share-init) :pointer)
 (cffi:defcfun ("curl_share_cleanup" %curl-share-cleanup) :int (share :pointer))

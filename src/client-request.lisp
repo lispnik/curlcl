@@ -17,10 +17,10 @@
 ;;;; library that other code will :USE causes more trouble than the shorter
 ;;;; name is worth.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 (defparameter *default-user-agent*
-  (format nil "libcurl-lisp/~A libcurl/~A"
+  (format nil "curlcl/~A libcurl/~A"
           "0.1.0" (or (ignore-errors (libcurl-version)) "unknown"))
   "Sent unless the caller says otherwise.  libcurl sends none by default, and
 a request with no User-Agent is rejected or throttled by enough servers to make

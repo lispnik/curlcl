@@ -26,7 +26,7 @@
 ;;;; request for http://origin.invalid/ok succeeds through the proxy and fails
 ;;;; without it.  That cannot pass by accident.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (defstruct (test-proxy (:conc-name proxy-))
   port

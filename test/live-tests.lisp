@@ -8,7 +8,7 @@
 ;;;; certificate chain, real DNS, a real HTTP/2 peer, and a redirect between
 ;;;; real hosts.  Anything testable offline is tested offline.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (in-suite live)
 
@@ -110,7 +110,7 @@
                            do (multiple-value-bind (octets frame) (ws-receive handle)
                                 (declare (ignore frame))
                                 (when octets
-                                  (return (libcurl::octets-to-string octets))))
+                                  (return (curlcl::octets-to-string octets))))
                               (sleep 0.01))))
         (is (or (null reply) (stringp reply))
             "unexpected websocket reply ~S" reply)))

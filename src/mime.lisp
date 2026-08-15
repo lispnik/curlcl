@@ -11,7 +11,7 @@
 ;;;; recorded against the handle like any other borrowed resource.  Parts are
 ;;;; owned by their mime and are never freed individually.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 ;;; curl_mime_free is declared in easy-raw.lisp, where the resource sweep that
 ;;; calls it can see it.

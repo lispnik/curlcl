@@ -6,7 +6,7 @@
 ;;;; two differ in options, protocols and whether websockets exist -- so the
 ;;;; binding has to interrogate rather than assume, and so do the tests.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (in-suite library)
 
@@ -35,15 +35,15 @@
   ;; AGE says how far into the struct it is safe to read.  Anything past it
   ;; must come back NIL rather than as uninitialised memory read as a pointer.
   (let* ((info (libcurl-version-info))
-         (age (libcurl::version-info-age info)))
+         (age (curlcl::version-info-age info)))
     (is (integerp age))
     (is (<= 0 age 11))
     (when (< age 11)
-      (is (null (libcurl::version-info-rtmp-version info))))
+      (is (null (curlcl::version-info-rtmp-version info))))
     (when (< age 10)
-      (is (null (libcurl::version-info-feature-names info))))
+      (is (null (curlcl::version-info-feature-names info))))
     (when (< age 7)
-      (is (null (libcurl::version-info-zstd-version info))))))
+      (is (null (curlcl::version-info-zstd-version info))))))
 
 (test version-at-least-p-brackets-the-running-version
   ;; True for its own version, false for one above it -- catches an inverted
@@ -78,8 +78,8 @@
 
 (test strerror-round-trips
   ;; CURLE_OK and a real error both produce text, and they differ.
-  (let ((ok (libcurl::%curl-easy-strerror 0))
-        (timeout (libcurl::%curl-easy-strerror 28)))
+  (let ((ok (curlcl::%curl-easy-strerror 0))
+        (timeout (curlcl::%curl-easy-strerror 28)))
     (is (stringp ok))
     (is (stringp timeout))
     (is (string/= ok timeout))))
@@ -114,7 +114,7 @@ documented separately, so each has to be checked separately."
   ;; carefully documented class can still leave its accessors bare.
   (let ((undocumented '())
         (checked 0))
-    (do-external-symbols (symbol :libcurl)
+    (do-external-symbols (symbol :curlcl)
       (dolist (kind (definition-kinds symbol))
         (incf checked)
         (unless (definition-documentation symbol kind)

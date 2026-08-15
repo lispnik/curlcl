@@ -17,7 +17,7 @@
 ;;;; returned.  Ordering matters: freeing before cleanup frees memory libcurl
 ;;;; is still reading.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 ;;; Octets <-> foreign buffers ------------------------------------------------
 

@@ -1,6 +1,6 @@
 ;;;; test/multi-tests.lisp — many transfers on one thread.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (in-suite multi)
 
@@ -62,7 +62,7 @@
              (let ((result (first (run-transfers multi))))
                (is (not (result-successful-p result)))
                (is (eq :partial-file (result-code-name result)))
-               (is (= (libcurl:curlcode-value :partial-file) (result-code result)))))
+               (is (= (curlcl:curlcode-value :partial-file) (result-code result)))))
         (close-handle handle)))))
 
 (test successes-and-failures-are-reported-together

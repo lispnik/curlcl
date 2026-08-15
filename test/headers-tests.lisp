@@ -1,6 +1,6 @@
 ;;;; test/headers-tests.lisp — the parsed header API.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (in-suite headers)
 

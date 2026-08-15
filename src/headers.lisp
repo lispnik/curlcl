@@ -11,7 +11,7 @@
 ;;;; family with no strerror function in libcurl at all, so the messages come
 ;;;; from the table in types.lisp.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 (cffi:defcfun ("curl_easy_header" %curl-easy-header) :int
   (handle :pointer) (name :string) (index :size) (origin :unsigned-int)

@@ -20,7 +20,7 @@
 ;;;;
 ;;;; The data lives in src/infos-table.lisp, which is generated.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 (defconstant +curlinfo-mask+     #x0fffff)
 (defconstant +curlinfo-typemask+ #xf00000)

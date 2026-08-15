@@ -1,6 +1,6 @@
 ;;;; test/client-tests.lisp — the HTTP client.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (in-suite client)
 
@@ -67,9 +67,9 @@
           "headers given as ~S did not arrive" headers))))
 
 (test keyword-header-names-are-capitalised
-  (is (string= "Content-Type" (libcurl::header-name-string :content-type)))
-  (is (string= "X-Api-Key" (libcurl::header-name-string :x-api-key)))
-  (is (string= "already-given" (libcurl::header-name-string "already-given"))))
+  (is (string= "Content-Type" (curlcl::header-name-string :content-type)))
+  (is (string= "X-Api-Key" (curlcl::header-name-string :x-api-key)))
+  (is (string= "already-given" (curlcl::header-name-string "already-given"))))
 
 (test the-header-callback-sees-each-line
   (let ((lines '()))
@@ -157,12 +157,12 @@
     (is (string= "iso-8859-1" charset))))
 
 (test json-and-suffixed-types-count-as-textual
-  (is (libcurl::textual-media-type-p "text/html"))
-  (is (libcurl::textual-media-type-p "application/json"))
-  (is (libcurl::textual-media-type-p "application/vnd.api+json"))
-  (is (libcurl::textual-media-type-p "image/svg+xml"))
-  (is (not (libcurl::textual-media-type-p "application/octet-stream")))
-  (is (not (libcurl::textual-media-type-p "image/png"))))
+  (is (curlcl::textual-media-type-p "text/html"))
+  (is (curlcl::textual-media-type-p "application/json"))
+  (is (curlcl::textual-media-type-p "application/vnd.api+json"))
+  (is (curlcl::textual-media-type-p "image/svg+xml"))
+  (is (not (curlcl::textual-media-type-p "application/octet-stream")))
+  (is (not (curlcl::textual-media-type-p "image/png"))))
 
 (test an-unrecognised-charset-comes-back-as-octets
   ;; Guessing would be worse than handing back what arrived: a body silently
@@ -173,7 +173,7 @@
     (is (stringp (decode-body octets "text/plain; charset=utf-8")))))
 
 (defun coerce-to-test-octets (string)
-  (libcurl::coerce-to-octets string))
+  (curlcl::coerce-to-octets string))
 
 (test a-body-that-lies-about-its-charset-still-comes-back
   ;; The transfer succeeded; a decoding failure must not turn that into an
@@ -297,32 +297,32 @@
 (test backoff-grows-and-is-bounded
   (let ((policy (make-retry '(:initial-delay 1.0 :multiplier 2.0 :max-delay 10.0
                               :jitter 0.0))))
-    (is (= 1.0 (libcurl::retry-delay policy 1)))
-    (is (= 2.0 (libcurl::retry-delay policy 2)))
-    (is (= 4.0 (libcurl::retry-delay policy 3)))
+    (is (= 1.0 (curlcl::retry-delay policy 1)))
+    (is (= 2.0 (curlcl::retry-delay policy 2)))
+    (is (= 4.0 (curlcl::retry-delay policy 3)))
     ;; Capped rather than doubling forever.
-    (is (= 10.0 (libcurl::retry-delay policy 20)))))
+    (is (= 10.0 (curlcl::retry-delay policy 20)))))
 
 (test jitter-spreads-the-delay-without-going-negative
   ;; Without jitter a fleet that failed together retries together, which is how
   ;; a struggling server is kept down.
   (let ((policy (make-retry '(:initial-delay 1.0 :multiplier 1.0 :jitter 0.5))))
-    (let ((delays (loop repeat 50 collect (libcurl::retry-delay policy 1))))
+    (let ((delays (loop repeat 50 collect (curlcl::retry-delay policy 1))))
       (is (every (lambda (d) (<= 0 d 1.5)) delays))
       (is (< 1 (length (remove-duplicates delays :test #'=)))
           "jitter produced identical delays"))))
 
 (test retry-after-is-honoured-over-the-computed-backoff
   (let ((policy (make-retry '(:initial-delay 30.0 :max-delay 60.0))))
-    (is (= 2 (libcurl::retry-delay policy 1 :retry-after 2))))
-  (is (= 5 (libcurl::parse-retry-after "5")))
-  (is (= 0 (libcurl::parse-retry-after "0")))
-  (is (null (libcurl::parse-retry-after "nonsense")))
+    (is (= 2 (curlcl::retry-delay policy 1 :retry-after 2))))
+  (is (= 5 (curlcl::parse-retry-after "5")))
+  (is (= 0 (curlcl::parse-retry-after "0")))
+  (is (null (curlcl::parse-retry-after "nonsense")))
   ;; The HTTP-date form is honoured too, through libcurl's own date parser.
   ;; A date already past yields 0 rather than a negative delay: the two clocks
   ;; need not agree, and a server saying "now" is the sensible reading.
-  (is (= 0 (libcurl::parse-retry-after "Wed, 21 Oct 2015 07:28:00 GMT")))
-  (let ((soon (libcurl::parse-retry-after
+  (is (= 0 (curlcl::parse-retry-after "Wed, 21 Oct 2015 07:28:00 GMT")))
+  (let ((soon (curlcl::parse-retry-after
                (multiple-value-bind (second minute hour day month year)
                    (decode-universal-time (+ (get-universal-time) 120) 0)
                  (format nil "~A, ~2,'0D ~A ~D ~2,'0D:~2,'0D:~2,'0D GMT"
@@ -334,9 +334,9 @@
         "a date two minutes out gave ~S seconds" soon)))
 
 (test retry-specifications-are-accepted-in-several-shapes
-  (is (= 1 (libcurl::retry-max-attempts (make-retry nil))))
-  (is (= 3 (libcurl::retry-max-attempts (make-retry 3))))
-  (is (= 7 (libcurl::retry-max-attempts (make-retry '(:max-attempts 7)))))
+  (is (= 1 (curlcl::retry-max-attempts (make-retry nil))))
+  (is (= 3 (curlcl::retry-max-attempts (make-retry 3))))
+  (is (= 7 (curlcl::retry-max-attempts (make-retry '(:max-attempts 7)))))
   (let ((policy (make-retry-policy :max-attempts 2)))
     (is (eq policy (make-retry policy)))))
 
@@ -363,7 +363,7 @@
           "the second request did not reuse the pooled handle"))))
 
 (defun session-pool-for-test (session)
-  (libcurl::session-pool session))
+  (curlcl::session-pool session))
 
 (test a-session-carries-cookies-between-requests
   ;; What the shared cookie jar buys: a login on one request is visible to the
@@ -630,14 +630,14 @@ reporting progress" (- latest earliest))))))
       (is (= 200 (response-status (first results))))
       (is (= 200 (response-status (second results))))
       ;; The handles came back to the pool still attached to the share.
-      (is (plusp (length (libcurl::session-pool session)))))))
+      (is (plusp (length (curlcl::session-pool session)))))))
 
 ;;; Streaming uploads ---------------------------------------------------------
 
 (test input-streams-a-file-without-buffering-it
   (uiop:with-temporary-file (:pathname path :stream out :direction :output
                              :element-type '(unsigned-byte 8))
-    (dotimes (i 1000) (write-sequence (libcurl::coerce-to-octets "0123456789") out))
+    (dotimes (i 1000) (write-sequence (curlcl::coerce-to-octets "0123456789") out))
     (finish-output out)
     :close-stream
     (let ((response (http-put (test-url "/echo") :input path)))
@@ -655,7 +655,7 @@ reporting progress" (- latest earliest))))))
   ;; A reader that reports its own count cannot do that.
   (uiop:with-temporary-file (:pathname path :stream out :direction :output
                              :element-type '(unsigned-byte 8))
-    (write-sequence (libcurl::coerce-to-octets "exactly-this") out)
+    (write-sequence (curlcl::coerce-to-octets "exactly-this") out)
     (finish-output out)
     :close-stream
     (let ((response (http-put (test-url "/echo") :input path)))
@@ -667,7 +667,7 @@ reporting progress" (- latest earliest))))))
 (test input-accepts-a-reader-function
   ;; Size unknown, so the body goes out chunked -- which the fixture now
   ;; understands, because that is what streaming from a pipe produces.
-  (let* ((remaining (libcurl::coerce-to-octets "from-a-function"))
+  (let* ((remaining (curlcl::coerce-to-octets "from-a-function"))
          (response (http-put (test-url "/echo")
                              :input (lambda (capacity)
                                       (if (zerop (length remaining))
@@ -689,7 +689,7 @@ reporting progress" (- latest earliest))))))
   ;; opened for itself gets closed.
   (uiop:with-temporary-file (:pathname path :stream out :direction :output
                              :element-type '(unsigned-byte 8))
-    (write-sequence (libcurl::coerce-to-octets "from-a-stream") out)
+    (write-sequence (curlcl::coerce-to-octets "from-a-stream") out)
     (finish-output out)
     :close-stream
     (with-open-file (in path :element-type '(unsigned-byte 8))
@@ -698,7 +698,7 @@ reporting progress" (- latest earliest))))))
         (is (open-stream-p in) "the caller's stream was closed")))))
 
 (test an-explicit-input-size-is-honoured
-  (let* ((remaining (libcurl::coerce-to-octets "sized"))
+  (let* ((remaining (curlcl::coerce-to-octets "sized"))
          (response (http-put (test-url "/echo")
                              :input-size 5
                              :input (lambda (capacity)
@@ -713,7 +713,7 @@ reporting progress" (- latest earliest))))))
   ;; cancelling the streaming body.
   (uiop:with-temporary-file (:pathname path :stream out :direction :output
                              :element-type '(unsigned-byte 8))
-    (write-sequence (libcurl::coerce-to-octets "posted-stream") out)
+    (write-sequence (curlcl::coerce-to-octets "posted-stream") out)
     (finish-output out)
     :close-stream
     (let ((response (http-post (test-url "/echo") :input path)))
@@ -725,7 +725,7 @@ reporting progress" (- latest earliest))))))
   ;; through the seek callback.
   (uiop:with-temporary-file (:pathname path :stream out :direction :output
                              :element-type '(unsigned-byte 8))
-    (write-sequence (libcurl::coerce-to-octets "rewound") out)
+    (write-sequence (curlcl::coerce-to-octets "rewound") out)
     (finish-output out)
     :close-stream
     (let ((response (http-put (test-url "/redirect/1") :input path
@@ -769,7 +769,7 @@ reporting progress" (- latest earliest))))))
                                      (setf (aref results index)
                                            (handler-case
                                                (loop repeat 50
-                                                     collect (libcurl::retry-delay
+                                                     collect (curlcl::retry-delay
                                                               policy 1))
                                              (error (c) c))))
                                    :name "jitter")))))
@@ -786,9 +786,9 @@ reporting progress" (- latest earliest))))))
   ;; Seeded once at load time it would be dumped into an executable, so every
   ;; process started from that binary would draw the identical backoff
   ;; sequence -- the same fleet-wide lockstep jitter exists to prevent.
-  (let ((before (loop repeat 5 collect (libcurl::jitter-factor))))
-    (libcurl::%reseed-jitter)
-    (let ((after (loop repeat 5 collect (libcurl::jitter-factor))))
+  (let ((before (loop repeat 5 collect (curlcl::jitter-factor))))
+    (curlcl::%reseed-jitter)
+    (let ((after (loop repeat 5 collect (curlcl::jitter-factor))))
       (is (not (equal before after))
           "reseeding produced the same sequence"))))
 

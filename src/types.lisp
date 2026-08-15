@@ -18,7 +18,7 @@
 ;;;; through CURLCODE-KEYWORD, which yields the raw integer when it does not
 ;;;; recognise it.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 ;;; Scalar types --------------------------------------------------------------
 ;;;

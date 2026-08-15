@@ -14,7 +14,7 @@
 ;;;; Only what the tests need is implemented: a single connection at a time,
 ;;;; frames up to 64 KiB, no extensions, no fragmentation on the server side.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 ;;; SHA-1 ---------------------------------------------------------------------
 

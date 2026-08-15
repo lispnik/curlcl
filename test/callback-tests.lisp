@@ -18,19 +18,19 @@
 ;;;; That exercises the whole Lisp side of the boundary -- lookup, argument
 ;;;; translation, the condition guard, the sentinel -- without a server.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (in-suite callbacks)
 
 (defmacro with-registered-state ((state) &body body)
   "Run BODY with STATE a registered CALLBACK-STATE, released afterwards."
-  `(let ((,state (libcurl::make-callback-state)))
-     (libcurl::register-callback-state ,state)
+  `(let ((,state (curlcl::make-callback-state)))
+     (curlcl::register-callback-state ,state)
      (unwind-protect (progn ,@body)
-       (libcurl::release-callback-state (libcurl::cb-key ,state)))))
+       (curlcl::release-callback-state (curlcl::cb-key ,state)))))
 
 (defun state-key-pointer (state)
-  (libcurl::callback-key-pointer (libcurl::cb-key state)))
+  (curlcl::callback-key-pointer (curlcl::cb-key state)))
 
 (defmacro calling-trampoline (name &rest arguments)
   "Invoke a trampoline through its C function pointer, as libcurl would."
@@ -42,50 +42,50 @@
   ;; A freed handle leaves libcurl holding a key that no longer resolves.  Every
   ;; trampoline must treat that as failure rather than calling into nothing.
   (let ((stale (cffi:make-pointer 999999)))
-    (is (= libcurl::+curl-writefunc-error+
-           (calling-trampoline libcurl::%write-trampoline
+    (is (= curlcl::+curl-writefunc-error+
+           (calling-trampoline curlcl::%write-trampoline
                                :pointer (cffi:null-pointer) :size 1 :size 1
                                :pointer stale :size)))
-    (is (= libcurl::+curl-readfunc-abort+
-           (calling-trampoline libcurl::%read-trampoline
+    (is (= curlcl::+curl-readfunc-abort+
+           (calling-trampoline curlcl::%read-trampoline
                                :pointer (cffi:null-pointer) :size 1 :size 1
                                :pointer stale :size)))
-    (is (= 1 (calling-trampoline libcurl::%xferinfo-trampoline
+    (is (= 1 (calling-trampoline curlcl::%xferinfo-trampoline
                                  :pointer stale :int64 0 :int64 0 :int64 0 :int64 0
                                  :int)))))
 
 (test a-null-userdata-is-not-key-zero
   ;; libcurl passes NULL when a *DATA option was never set; keys start at 1 so
   ;; that can never be mistaken for a live registration.
-  (is (null (libcurl::%lookup-state (cffi:null-pointer))))
+  (is (null (curlcl::%lookup-state (cffi:null-pointer))))
   (with-registered-state (state)
-    (is (plusp (libcurl::cb-key state)))))
+    (is (plusp (curlcl::cb-key state)))))
 
 ;;; The size_t-returning callbacks -------------------------------------------
 
 (test the-write-trampoline-decodes-its-buffer-and-honours-its-returns
   (with-registered-state (state)
     (let ((seen nil))
-      (setf (libcurl::cb-write state) (lambda (octets) (setf seen octets) t))
+      (setf (curlcl::cb-write state) (lambda (octets) (setf seen octets) t))
       (cffi:with-foreign-string (buffer "hello" :null-terminated-p nil)
         ;; size * nitems is the byte count, and both factors have to be used.
-        (is (= 5 (calling-trampoline libcurl::%write-trampoline
+        (is (= 5 (calling-trampoline curlcl::%write-trampoline
                                      :pointer buffer :size 5 :size 1
                                      :pointer (state-key-pointer state) :size)))
-        (is (equalp (libcurl::coerce-to-octets "hello") seen))
-        (is (= 4 (calling-trampoline libcurl::%write-trampoline
+        (is (equalp (curlcl::coerce-to-octets "hello") seen))
+        (is (= 4 (calling-trampoline curlcl::%write-trampoline
                                      :pointer buffer :size 2 :size 2
                                      :pointer (state-key-pointer state) :size))
             "size and nitems are multiplied"))
       ;; NIL aborts, :PAUSE pauses -- both exact 32-bit values.
-      (setf (libcurl::cb-write state) (lambda (octets) (declare (ignore octets)) nil))
-      (is (= libcurl::+curl-writefunc-error+
-             (calling-trampoline libcurl::%write-trampoline
+      (setf (curlcl::cb-write state) (lambda (octets) (declare (ignore octets)) nil))
+      (is (= curlcl::+curl-writefunc-error+
+             (calling-trampoline curlcl::%write-trampoline
                                  :pointer (cffi:null-pointer) :size 0 :size 0
                                  :pointer (state-key-pointer state) :size)))
-      (setf (libcurl::cb-write state) (lambda (octets) (declare (ignore octets)) :pause))
-      (is (= libcurl::+curl-writefunc-pause+
-             (calling-trampoline libcurl::%write-trampoline
+      (setf (curlcl::cb-write state) (lambda (octets) (declare (ignore octets)) :pause))
+      (is (= curlcl::+curl-writefunc-pause+
+             (calling-trampoline curlcl::%write-trampoline
                                  :pointer (cffi:null-pointer) :size 0 :size 0
                                  :pointer (state-key-pointer state) :size))))))
 
@@ -96,62 +96,62 @@
     (macrolet ((signalling (slot) `(setf (,slot state) (lambda (&rest ignored)
                                                          (declare (ignore ignored))
                                                          (error "callback failed")))))
-      (signalling libcurl::cb-write)
-      (is (= libcurl::+curl-writefunc-error+
-             (calling-trampoline libcurl::%write-trampoline
+      (signalling curlcl::cb-write)
+      (is (= curlcl::+curl-writefunc-error+
+             (calling-trampoline curlcl::%write-trampoline
                                  :pointer (cffi:null-pointer) :size 0 :size 0
                                  :pointer (state-key-pointer state) :size)))
-      (signalling libcurl::cb-read)
-      (is (= libcurl::+curl-readfunc-abort+
-             (calling-trampoline libcurl::%read-trampoline
+      (signalling curlcl::cb-read)
+      (is (= curlcl::+curl-readfunc-abort+
+             (calling-trampoline curlcl::%read-trampoline
                                  :pointer (cffi:null-pointer) :size 0 :size 0
                                  :pointer (state-key-pointer state) :size)))
-      (signalling libcurl::cb-seek)
-      (is (= libcurl::+curl-seekfunc-fail+
-             (calling-trampoline libcurl::%seek-trampoline
+      (signalling curlcl::cb-seek)
+      (is (= curlcl::+curl-seekfunc-fail+
+             (calling-trampoline curlcl::%seek-trampoline
                                  :pointer (state-key-pointer state)
                                  :int64 0 :int 0 :int)))
-      (signalling libcurl::cb-sockopt)
-      (is (= libcurl::+curl-sockopt-error+
-             (calling-trampoline libcurl::%sockopt-trampoline
+      (signalling curlcl::cb-sockopt)
+      (is (= curlcl::+curl-sockopt-error+
+             (calling-trampoline curlcl::%sockopt-trampoline
                                  :pointer (state-key-pointer state)
                                  :int 3 :int 0 :int)))
-      (signalling libcurl::cb-fnmatch)
-      (is (= libcurl::+curl-fnmatchfunc-fail+
-             (calling-trampoline libcurl::%fnmatch-trampoline
+      (signalling curlcl::cb-fnmatch)
+      (is (= curlcl::+curl-fnmatchfunc-fail+
+             (calling-trampoline curlcl::%fnmatch-trampoline
                                  :pointer (state-key-pointer state)
                                  :string "*" :string "a" :int)))
-      (signalling libcurl::cb-prereq)
-      (is (= libcurl::+curl-prereqfunc-abort+
-             (calling-trampoline libcurl::%prereq-trampoline
+      (signalling curlcl::cb-prereq)
+      (is (= curlcl::+curl-prereqfunc-abort+
+             (calling-trampoline curlcl::%prereq-trampoline
                                  :pointer (state-key-pointer state)
                                  :pointer (cffi:null-pointer)
                                  :pointer (cffi:null-pointer)
                                  :int 0 :int 0 :int)))
       ;; The condition is kept for PERFORM to re-signal, and only the first.
-      (is (typep (libcurl::cb-condition state) 'error)))))
+      (is (typep (curlcl::cb-condition state) 'error)))))
 
 (test the-read-trampoline-copies-into-libcurls-buffer
   (with-registered-state (state)
-    (setf (libcurl::cb-read state)
+    (setf (curlcl::cb-read state)
           (lambda (capacity) (declare (ignore capacity)) "abcd"))
     (cffi:with-foreign-object (buffer :uint8 16)
-      (is (= 4 (calling-trampoline libcurl::%read-trampoline
+      (is (= 4 (calling-trampoline curlcl::%read-trampoline
                                    :pointer buffer :size 16 :size 1
                                    :pointer (state-key-pointer state) :size)))
-      (is (equalp (libcurl::coerce-to-octets "abcd")
-                  (libcurl::foreign-to-octets buffer 4))))
+      (is (equalp (curlcl::coerce-to-octets "abcd")
+                  (curlcl::foreign-to-octets buffer 4))))
     ;; :EOF is zero, which is how libcurl learns the body is complete.
-    (setf (libcurl::cb-read state) (lambda (capacity) (declare (ignore capacity)) :eof))
-    (is (= 0 (calling-trampoline libcurl::%read-trampoline
+    (setf (curlcl::cb-read state) (lambda (capacity) (declare (ignore capacity)) :eof))
+    (is (= 0 (calling-trampoline curlcl::%read-trampoline
                                  :pointer (cffi:null-pointer) :size 0 :size 0
                                  :pointer (state-key-pointer state) :size)))
     ;; Returning more than the buffer holds must fail rather than overrun it.
-    (setf (libcurl::cb-read state)
+    (setf (curlcl::cb-read state)
           (lambda (capacity) (declare (ignore capacity)) "far too long for this"))
     (cffi:with-foreign-object (buffer :uint8 4)
-      (is (= libcurl::+curl-readfunc-abort+
-             (calling-trampoline libcurl::%read-trampoline
+      (is (= curlcl::+curl-readfunc-abort+
+             (calling-trampoline curlcl::%read-trampoline
                                  :pointer buffer :size 4 :size 1
                                  :pointer (state-key-pointer state) :size))
           "an over-long read should abort, not overrun the buffer"))))
@@ -161,44 +161,44 @@
 (test the-fnmatch-trampoline-translates-match-and-nomatch
   (with-registered-state (state)
     (let ((seen nil))
-      (setf (libcurl::cb-fnmatch state)
+      (setf (curlcl::cb-fnmatch state)
             (lambda (pattern string) (setf seen (list pattern string))
               (string= pattern string)))
-      (is (= libcurl::+curl-fnmatchfunc-match+
-             (calling-trampoline libcurl::%fnmatch-trampoline
+      (is (= curlcl::+curl-fnmatchfunc-match+
+             (calling-trampoline curlcl::%fnmatch-trampoline
                                  :pointer (state-key-pointer state)
                                  :string "same" :string "same" :int)))
       (is (equal '("same" "same") seen))
-      (is (= libcurl::+curl-fnmatchfunc-nomatch+
-             (calling-trampoline libcurl::%fnmatch-trampoline
+      (is (= curlcl::+curl-fnmatchfunc-nomatch+
+             (calling-trampoline curlcl::%fnmatch-trampoline
                                  :pointer (state-key-pointer state)
                                  :string "a" :string "b" :int))))))
 
 (test the-chunk-trampolines-translate-their-outcomes
   (with-registered-state (state)
     (let ((remains nil))
-      (setf (libcurl::cb-chunk-begin state)
+      (setf (curlcl::cb-chunk-begin state)
             (lambda (info left) (declare (ignore info)) (setf remains left) t))
-      (is (= libcurl::+curl-chunk-bgn-func-ok+
-             (calling-trampoline libcurl::%chunk-begin-trampoline
+      (is (= curlcl::+curl-chunk-bgn-func-ok+
+             (calling-trampoline curlcl::%chunk-begin-trampoline
                                  :pointer (cffi:null-pointer)
                                  :pointer (state-key-pointer state)
                                  :int 7 :long)))
       (is (= 7 remains))
-      (setf (libcurl::cb-chunk-begin state)
+      (setf (curlcl::cb-chunk-begin state)
             (lambda (info left) (declare (ignore info left)) :skip))
-      (is (= libcurl::+curl-chunk-bgn-func-skip+
-             (calling-trampoline libcurl::%chunk-begin-trampoline
+      (is (= curlcl::+curl-chunk-bgn-func-skip+
+             (calling-trampoline curlcl::%chunk-begin-trampoline
                                  :pointer (cffi:null-pointer)
                                  :pointer (state-key-pointer state)
                                  :int 0 :long)))
-      (setf (libcurl::cb-chunk-end state) (lambda () t))
-      (is (= libcurl::+curl-chunk-end-func-ok+
-             (calling-trampoline libcurl::%chunk-end-trampoline
+      (setf (curlcl::cb-chunk-end state) (lambda () t))
+      (is (= curlcl::+curl-chunk-end-func-ok+
+             (calling-trampoline curlcl::%chunk-end-trampoline
                                  :pointer (state-key-pointer state) :long)))
-      (setf (libcurl::cb-chunk-end state) (lambda () nil))
-      (is (= libcurl::+curl-chunk-end-func-fail+
-             (calling-trampoline libcurl::%chunk-end-trampoline
+      (setf (curlcl::cb-chunk-end state) (lambda () nil))
+      (is (= curlcl::+curl-chunk-end-func-fail+
+             (calling-trampoline curlcl::%chunk-end-trampoline
                                  :pointer (state-key-pointer state) :long))))))
 
 (test the-ssh-host-key-trampoline-accepts-with-zero
@@ -207,39 +207,39 @@
   ;; the callback.
   (with-registered-state (state)
     (let ((seen nil))
-      (setf (libcurl::cb-ssh-host-key state)
+      (setf (curlcl::cb-ssh-host-key state)
             (lambda (type key) (setf seen (list type (length key))) t))
       (cffi:with-foreign-string (key "keybytes" :null-terminated-p nil)
-        (is (= 0 (calling-trampoline libcurl::%ssh-host-key-trampoline
+        (is (= 0 (calling-trampoline curlcl::%ssh-host-key-trampoline
                                      :pointer (state-key-pointer state)
                                      :int 2 :pointer key :size 8 :int)))
         (is (equal '(:rsa 8) seen)))
-      (setf (libcurl::cb-ssh-host-key state) (lambda (type key)
+      (setf (curlcl::cb-ssh-host-key state) (lambda (type key)
                                                (declare (ignore type key)) nil))
-      (is (= 1 (calling-trampoline libcurl::%ssh-host-key-trampoline
+      (is (= 1 (calling-trampoline curlcl::%ssh-host-key-trampoline
                                    :pointer (state-key-pointer state)
                                    :int 2 :pointer (cffi:null-pointer) :size 0 :int)))
       ;; With no closure at all the host key must be refused, not accepted.
-      (setf (libcurl::cb-ssh-host-key state) nil)
-      (is (= 1 (calling-trampoline libcurl::%ssh-host-key-trampoline
+      (setf (curlcl::cb-ssh-host-key state) nil)
+      (is (= 1 (calling-trampoline curlcl::%ssh-host-key-trampoline
                                    :pointer (state-key-pointer state)
                                    :int 2 :pointer (cffi:null-pointer) :size 0 :int))
           "an unset host-key callback must refuse rather than accept"))))
 
 (test the-ssh-key-trampoline-returns-a-khstat
   (with-registered-state (state)
-    (setf (libcurl::cb-ssh-key state)
+    (setf (curlcl::cb-ssh-key state)
           (lambda (known found match) (declare (ignore known found match)) :fine))
-    (is (= (libcurl:curlcode-value :fine 'libcurl::curl-khstat)
-           (calling-trampoline libcurl::%ssh-key-trampoline
+    (is (= (curlcl:curlcode-value :fine 'curlcl::curl-khstat)
+           (calling-trampoline curlcl::%ssh-key-trampoline
                                :pointer (cffi:null-pointer)
                                :pointer (cffi:null-pointer)
                                :pointer (cffi:null-pointer)
                                :int 0 :pointer (state-key-pointer state) :int)))
     ;; Anything unrecognised, and the unset case, must reject.
-    (setf (libcurl::cb-ssh-key state) nil)
-    (is (= (libcurl:curlcode-value :reject 'libcurl::curl-khstat)
-           (calling-trampoline libcurl::%ssh-key-trampoline
+    (setf (curlcl::cb-ssh-key state) nil)
+    (is (= (curlcl:curlcode-value :reject 'curlcl::curl-khstat)
+           (calling-trampoline curlcl::%ssh-key-trampoline
                                :pointer (cffi:null-pointer)
                                :pointer (cffi:null-pointer)
                                :pointer (cffi:null-pointer)
@@ -248,50 +248,50 @@
 (test the-interleave-trampoline-behaves-like-write
   (with-registered-state (state)
     (let ((seen nil))
-      (setf (libcurl::cb-interleave state) (lambda (octets) (setf seen octets) t))
+      (setf (curlcl::cb-interleave state) (lambda (octets) (setf seen octets) t))
       (cffi:with-foreign-string (buffer "rtp" :null-terminated-p nil)
-        (is (= 3 (calling-trampoline libcurl::%interleave-trampoline
+        (is (= 3 (calling-trampoline curlcl::%interleave-trampoline
                                      :pointer buffer :size 3 :size 1
                                      :pointer (state-key-pointer state) :size)))
-        (is (equalp (libcurl::coerce-to-octets "rtp") seen))))))
+        (is (equalp (curlcl::coerce-to-octets "rtp") seen))))))
 
 (test the-ioctl-trampoline-maps-its-command-and-errors
   (with-registered-state (state)
     (let ((seen nil))
-      (setf (libcurl::cb-ioctl state) (lambda (command) (setf seen command) t))
-      (is (= (libcurl:curlcode-value :ok 'libcurl::curlioerr)
-             (calling-trampoline libcurl::%ioctl-trampoline
+      (setf (curlcl::cb-ioctl state) (lambda (command) (setf seen command) t))
+      (is (= (curlcl:curlcode-value :ok 'curlcl::curlioerr)
+             (calling-trampoline curlcl::%ioctl-trampoline
                                  :pointer (cffi:null-pointer) :int 1
                                  :pointer (state-key-pointer state) :int)))
       (is (eq :restartread seen))
       ;; Unset means "unknown command", which is what tells libcurl to give up
       ;; on the ioctl rather than to fail the transfer.
-      (setf (libcurl::cb-ioctl state) nil)
-      (is (= (libcurl:curlcode-value :unknowncmd 'libcurl::curlioerr)
-             (calling-trampoline libcurl::%ioctl-trampoline
+      (setf (curlcl::cb-ioctl state) nil)
+      (is (= (curlcl:curlcode-value :unknowncmd 'curlcl::curlioerr)
+             (calling-trampoline curlcl::%ioctl-trampoline
                                  :pointer (cffi:null-pointer) :int 0
                                  :pointer (state-key-pointer state) :int))))))
 
 (test the-trailer-trampoline-hands-libcurl-an-slist
   (with-registered-state (state)
-    (setf (libcurl::cb-trailer state) (lambda () '("X-Checksum: abc" "X-Count: 2")))
+    (setf (curlcl::cb-trailer state) (lambda () '("X-Checksum: abc" "X-Count: 2")))
     (cffi:with-foreign-object (out :pointer)
       (setf (cffi:mem-ref out :pointer) (cffi:null-pointer))
-      (is (= libcurl::+curl-trailerfunc-ok+
-             (calling-trampoline libcurl::%trailer-trampoline
+      (is (= curlcl::+curl-trailerfunc-ok+
+             (calling-trampoline curlcl::%trailer-trampoline
                                  :pointer out
                                  :pointer (state-key-pointer state) :int)))
       (let ((head (cffi:mem-ref out :pointer)))
         (is (not (cffi:null-pointer-p head)))
-        (is (equal '("X-Checksum: abc" "X-Count: 2") (libcurl::slist-to-list head)))
+        (is (equal '("X-Checksum: abc" "X-Count: 2") (curlcl::slist-to-list head)))
         ;; libcurl owns and frees this chain; freeing it here would double-free
         ;; in a real transfer, so the test only reads it.
-        (libcurl::%curl-slist-free-all head)))
+        (curlcl::%curl-slist-free-all head)))
     ;; Returning nothing aborts, rather than sending an empty trailer.
-    (setf (libcurl::cb-trailer state) (lambda () nil))
+    (setf (curlcl::cb-trailer state) (lambda () nil))
     (cffi:with-foreign-object (out :pointer)
-      (is (= libcurl::+curl-trailerfunc-abort+
-             (calling-trampoline libcurl::%trailer-trampoline
+      (is (= curlcl::+curl-trailerfunc-abort+
+             (calling-trampoline curlcl::%trailer-trampoline
                                  :pointer out
                                  :pointer (state-key-pointer state) :int))))))
 
@@ -299,30 +299,30 @@
   ;; struct curl_hstsentry's includeSubDomains is a C bitfield, which CFFI
   ;; cannot express, so it is masked out of the containing word by hand.
   (with-registered-state (state)
-    (cffi:with-foreign-object (entry '(:struct libcurl::curl-hstsentry))
-      (cffi:with-foreign-object (index '(:struct libcurl::curl-index))
+    (cffi:with-foreign-object (entry '(:struct curlcl::curl-hstsentry))
+      (cffi:with-foreign-object (index '(:struct curlcl::curl-index))
         (cffi:with-foreign-string (name "example.com")
-          (setf (cffi:foreign-slot-value entry '(:struct libcurl::curl-hstsentry)
-                                         'libcurl::name) name
-                (cffi:foreign-slot-value entry '(:struct libcurl::curl-hstsentry)
-                                         'libcurl::namelen) 64
-                (cffi:foreign-slot-value entry '(:struct libcurl::curl-hstsentry)
-                                         'libcurl::flags) 1)
+          (setf (cffi:foreign-slot-value entry '(:struct curlcl::curl-hstsentry)
+                                         'curlcl::name) name
+                (cffi:foreign-slot-value entry '(:struct curlcl::curl-hstsentry)
+                                         'curlcl::namelen) 64
+                (cffi:foreign-slot-value entry '(:struct curlcl::curl-hstsentry)
+                                         'curlcl::flags) 1)
           (cffi:lisp-string-to-foreign
            "20300101 00:00:00"
-           (cffi:foreign-slot-pointer entry '(:struct libcurl::curl-hstsentry)
-                                      'libcurl::expire)
+           (cffi:foreign-slot-pointer entry '(:struct curlcl::curl-hstsentry)
+                                      'curlcl::expire)
            18)
-          (setf (cffi:foreign-slot-value index '(:struct libcurl::curl-index)
-                                         'libcurl::index) 0
-                (cffi:foreign-slot-value index '(:struct libcurl::curl-index)
-                                         'libcurl::total) 1)
+          (setf (cffi:foreign-slot-value index '(:struct curlcl::curl-index)
+                                         'curlcl::index) 0
+                (cffi:foreign-slot-value index '(:struct curlcl::curl-index)
+                                         'curlcl::total) 1)
           (let ((seen nil))
-            (setf (libcurl::cb-hsts-write state)
+            (setf (curlcl::cb-hsts-write state)
                   (lambda (entry-list position total)
                     (setf seen (list entry-list position total))))
-            (is (= (libcurl:curlcode-value :ok 'libcurl::curlsts-code)
-                   (calling-trampoline libcurl::%hsts-write-trampoline
+            (is (= (curlcl:curlcode-value :ok 'curlcl::curlsts-code)
+                   (calling-trampoline curlcl::%hsts-write-trampoline
                                        :pointer (cffi:null-pointer)
                                        :pointer entry :pointer index
                                        :pointer (state-key-pointer state) :int)))
@@ -334,25 +334,25 @@
               (is (= 1 total))))
           ;; Reading back: no closure means "no more entries", which ends the
           ;; load rather than failing it.
-          (setf (libcurl::cb-hsts-read state) nil)
-          (is (= (libcurl:curlcode-value :done 'libcurl::curlsts-code)
-                 (calling-trampoline libcurl::%hsts-read-trampoline
+          (setf (curlcl::cb-hsts-read state) nil)
+          (is (= (curlcl:curlcode-value :done 'curlcl::curlsts-code)
+                 (calling-trampoline curlcl::%hsts-read-trampoline
                                      :pointer (cffi:null-pointer) :pointer entry
                                      :pointer (state-key-pointer state) :int))))))))
 
 (test the-socket-trampolines-translate-poll-flags
   (with-registered-state (state)
     (let ((seen nil))
-      (setf (libcurl::cb-socket state)
+      (setf (curlcl::cb-socket state)
             (lambda (socket what easy data)
               (declare (ignore easy data))
               (push (cons socket what) seen)
               t))
-      (dolist (pair (list (cons libcurl::+curl-poll-in+ :in)
-                          (cons libcurl::+curl-poll-out+ :out)
-                          (cons libcurl::+curl-poll-inout+ :in-out)
-                          (cons libcurl::+curl-poll-remove+ :remove)))
-        (calling-trampoline libcurl::%socket-trampoline
+      (dolist (pair (list (cons curlcl::+curl-poll-in+ :in)
+                          (cons curlcl::+curl-poll-out+ :out)
+                          (cons curlcl::+curl-poll-inout+ :in-out)
+                          (cons curlcl::+curl-poll-remove+ :remove)))
+        (calling-trampoline curlcl::%socket-trampoline
                             :pointer (cffi:null-pointer)
                             :int 9
                             :int (car pair)
@@ -361,12 +361,12 @@
         (is (equal (cons 9 (cdr pair)) (first seen))
             "poll flag ~D should decode to ~S" (car pair) (cdr pair))))
     (let ((timeouts nil))
-      (setf (libcurl::cb-timer state) (lambda (ms) (push ms timeouts) t))
-      (calling-trampoline libcurl::%timer-trampoline
+      (setf (curlcl::cb-timer state) (lambda (ms) (push ms timeouts) t))
+      (calling-trampoline curlcl::%timer-trampoline
                           :pointer (cffi:null-pointer) :long 250
                           :pointer (state-key-pointer state) :int)
       ;; -1 means "cancel the timer", which must not look like a 1ms one.
-      (calling-trampoline libcurl::%timer-trampoline
+      (calling-trampoline curlcl::%timer-trampoline
                           :pointer (cffi:null-pointer) :long -1
                           :pointer (state-key-pointer state) :int)
       (is (equal '(nil 250) timeouts)))))
@@ -444,18 +444,18 @@
   ;; repeat a request across a redirect, and can only do it through this.
   (uiop:with-temporary-file (:pathname path :stream out :direction :output
                              :element-type '(unsigned-byte 8))
-    (write-sequence (libcurl::coerce-to-octets "rewind-me") out)
+    (write-sequence (curlcl::coerce-to-octets "rewind-me") out)
     (finish-output out)
     :close-stream
     (with-open-file (in path :element-type '(unsigned-byte 8))
       (with-easy (handle)
         (let ((seeks nil))
           (setf (callback-function handle :write) (lambda (o) (declare (ignore o)) t)
-                (callback-function handle :read) (libcurl::stream-reader in)
+                (callback-function handle :read) (curlcl::stream-reader in)
                 (callback-function handle :seek)
                 (lambda (offset whence)
                   (push (list offset whence) seeks)
-                  (funcall (libcurl::stream-seeker in) offset whence)))
+                  (funcall (curlcl::stream-seeker in) offset whence)))
           (setopts handle :url (test-url "/redirect/1")
                           :upload t
                           :infilesize-large 9

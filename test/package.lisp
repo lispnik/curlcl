@@ -1,7 +1,7 @@
 ;;;; test/package.lisp
 
-(defpackage #:libcurl/test
-  (:use #:cl #:fiveam #:libcurl)
+(defpackage #:curlcl/test
+  (:use #:cl #:fiveam #:curlcl)
   ;; FiveAM's TEST is the test-defining macro here, not anything of ours.
   (:shadowing-import-from #:fiveam #:test)
   (:export #:run-tests
@@ -11,7 +11,7 @@
            #:url #:headers #:mime #:share #:multi #:websockets #:client #:cli
            #:connection #:cookies #:live))
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (def-suite all-tests
   :description "Every libcurl test.")

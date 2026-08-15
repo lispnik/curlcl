@@ -5,46 +5,46 @@
 ;;;; curl is checked against the real curl by the end-to-end tests at the
 ;;;; bottom, which run the built binary if there is one and skip if not.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (in-suite cli)
 
 (test splitting-on-the-first-separator-only
-  (multiple-value-bind (before after) (libcurl/cli::split-once "user:pass:word" #\:)
+  (multiple-value-bind (before after) (curlcl/cli::split-once "user:pass:word" #\:)
     (is (string= "user" before))
     ;; The rest is kept whole, so a password containing a colon survives.
     (is (string= "pass:word" after)))
-  (multiple-value-bind (before after) (libcurl/cli::split-once "nocolon" #\:)
+  (multiple-value-bind (before after) (curlcl/cli::split-once "nocolon" #\:)
     (is (string= "nocolon" before))
     (is (null after))))
 
 (test form-arguments-are-parsed-the-way-curl-spells-them
   (is (equal '(:name "field" :data "value")
-             (libcurl/cli::parse-form-part "field=value")))
+             (curlcl/cli::parse-form-part "field=value")))
   ;; @ means a file rather than a literal value.
   (is (equal '(:name "upload" :file "/tmp/x.png")
-             (libcurl/cli::parse-form-part "upload=@/tmp/x.png")))
+             (curlcl/cli::parse-form-part "upload=@/tmp/x.png")))
   (is (equal '(:name "upload" :file "/tmp/x.png" :content-type "image/png")
-             (libcurl/cli::parse-form-part "upload=@/tmp/x.png;type=image/png")))
+             (curlcl/cli::parse-form-part "upload=@/tmp/x.png;type=image/png")))
   (is (equal '(:name "f" :data "v" :content-type "text/plain")
-             (libcurl/cli::parse-form-part "f=v;type=text/plain")))
-  (signals error (libcurl/cli::parse-form-part "no-equals-sign")))
+             (curlcl/cli::parse-form-part "f=v;type=text/plain")))
+  (signals error (curlcl/cli::parse-form-part "no-equals-sign")))
 
 (test remote-name-derives-a-filename-from-the-url
   (is (string= "file.tar.gz"
-               (libcurl/cli::url-filename "https://example.com/a/b/file.tar.gz")))
-  (is (string= "page" (libcurl/cli::url-filename "https://example.com/page")))
+               (curlcl/cli::url-filename "https://example.com/a/b/file.tar.gz")))
+  (is (string= "page" (curlcl/cli::url-filename "https://example.com/page")))
   ;; curl uses the last segment; with none, something has to be chosen.
-  (is (string= "index.html" (libcurl/cli::url-filename "https://example.com/")))
-  (is (string= "index.html" (libcurl/cli::url-filename "https://example.com"))))
+  (is (string= "index.html" (curlcl/cli::url-filename "https://example.com/")))
+  (is (string= "index.html" (curlcl/cli::url-filename "https://example.com"))))
 
 (defun make-test-response (&key (status 200) (url "https://example.com/")
                                 (content-type "text/html") (size 559)
                                 (version :http/2) (redirects 0)
                                 (timings '(:total 250000)))
-  (make-instance 'libcurl:response
+  (make-instance 'curlcl:response
                  :status status :url url :version version
-                 :headers (list (libcurl::make-http-header :name "Content-Type"
+                 :headers (list (curlcl::make-http-header :name "Content-Type"
                                                            :value content-type))
                  :body (make-array 0 :element-type '(unsigned-byte 8))
                  :timings timings :redirect-count redirects
@@ -52,42 +52,42 @@
 
 (test write-out-expands-the-variables-curl-defines
   (let ((response (make-test-response)))
-    (is (string= "200" (libcurl/cli::expand-write-out "%{http_code}" response)))
+    (is (string= "200" (curlcl/cli::expand-write-out "%{http_code}" response)))
     (is (string= "text/html"
-                 (libcurl/cli::expand-write-out "%{content_type}" response)))
-    (is (string= "559" (libcurl/cli::expand-write-out "%{size_download}" response)))
+                 (curlcl/cli::expand-write-out "%{content_type}" response)))
+    (is (string= "559" (curlcl/cli::expand-write-out "%{size_download}" response)))
     (is (string= "https://example.com/"
-                 (libcurl/cli::expand-write-out "%{url_effective}" response)))
+                 (curlcl/cli::expand-write-out "%{url_effective}" response)))
     ;; curl prints the bare version number, not a keyword.
-    (is (string= "2" (libcurl/cli::expand-write-out "%{http_version}" response)))
-    (is (string= "0.250000" (libcurl/cli::expand-write-out "%{time_total}" response)))))
+    (is (string= "2" (curlcl/cli::expand-write-out "%{http_version}" response)))
+    (is (string= "0.250000" (curlcl/cli::expand-write-out "%{time_total}" response)))))
 
 (test write-out-handles-escapes-and-literal-text
   (let ((response (make-test-response)))
     (is (string= (format nil "code=200~%")
-                 (libcurl/cli::expand-write-out "code=%{http_code}\\n" response)))
+                 (curlcl/cli::expand-write-out "code=%{http_code}\\n" response)))
     (is (string= (format nil "a~Cb" #\Tab)
-                 (libcurl/cli::expand-write-out "a\\tb" response)))
+                 (curlcl/cli::expand-write-out "a\\tb" response)))
     (is (string= "no variables here"
-                 (libcurl/cli::expand-write-out "no variables here" response)))))
+                 (curlcl/cli::expand-write-out "no variables here" response)))))
 
 (test an-unknown-write-out-variable-is-left-visible
   ;; Silently expanding to nothing would hide a typo; curl prints the variable
   ;; back, and so does this.
   (let ((response (make-test-response)))
     (is (string= "%{no_such_thing}"
-                 (libcurl/cli::expand-write-out "%{no_such_thing}" response)))))
+                 (curlcl/cli::expand-write-out "%{no_such_thing}" response)))))
 
 (test the-exit-code-is-the-curlcode
   ;; Scripts check curl's exit status, so ours has to be the same number.
-  (is (= 6 (libcurl/cli::exit-code-for
-            (make-condition 'libcurl:easy-error
+  (is (= 6 (curlcl/cli::exit-code-for
+            (make-condition 'curlcl:easy-error
                             :code 6 :code-name :couldnt-resolve-host))))
-  (is (= 28 (libcurl/cli::exit-code-for
-             (make-condition 'libcurl:easy-error
+  (is (= 28 (curlcl/cli::exit-code-for
+             (make-condition 'curlcl:easy-error
                              :code 28 :code-name :operation-timedout))))
   ;; Anything that is not a libcurl failure gets curl's "failed to initialise".
-  (is (= 2 (libcurl/cli::exit-code-for (make-condition 'simple-error)))))
+  (is (= 2 (curlcl/cli::exit-code-for (make-condition 'simple-error)))))
 
 ;;; End to end, against the real curl -----------------------------------------
 
@@ -96,9 +96,9 @@
   ;; :build-pathname verbatim.  Both spellings are tried rather than
   ;; feature-conditionalised, so a binary built either way is found.
   (or (find-if #'probe-file
-               (list (asdf:system-relative-pathname :libcurl "bin/curlcl")
-                     (asdf:system-relative-pathname :libcurl "bin/curlcl.exe")))
-      (asdf:system-relative-pathname :libcurl "bin/curlcl"))
+               (list (asdf:system-relative-pathname :curlcl "bin/curlcl")
+                     (asdf:system-relative-pathname :curlcl "bin/curlcl.exe")))
+      (asdf:system-relative-pathname :curlcl "bin/curlcl"))
   "The built driver.  Tests using it skip when it has not been built.")
 
 (defun run-program-capturing (program arguments)
@@ -253,7 +253,7 @@ gets it from the command line, so there is nothing to translate it for us."
   (with-curlcl-or-skip
     (uiop:with-temporary-file (:pathname path :stream out :direction :output
                                :element-type '(unsigned-byte 8))
-      (write-sequence (libcurl::coerce-to-octets "uploaded-by-curlcl") out)
+      (write-sequence (curlcl::coerce-to-octets "uploaded-by-curlcl") out)
       (finish-output out)
       :close-stream
       (multiple-value-bind (output code)
@@ -361,11 +361,11 @@ gets it from the command line, so there is nothing to translate it for us."
       (is (string= "" output)))))
 
 (test status-lines-are-recognised
-  (is (= 404 (libcurl/cli::parse-status-line "HTTP/1.1 404 Not Found")))
-  (is (= 200 (libcurl/cli::parse-status-line "HTTP/2 200")))
+  (is (= 404 (curlcl/cli::parse-status-line "HTTP/1.1 404 Not Found")))
+  (is (= 200 (curlcl/cli::parse-status-line "HTTP/2 200")))
   ;; An ordinary header is not a status line.
-  (is (null (libcurl/cli::parse-status-line "Content-Type: text/plain")))
-  (is (null (libcurl/cli::parse-status-line ""))))
+  (is (null (curlcl/cli::parse-status-line "Content-Type: text/plain")))
+  (is (null (curlcl/cli::parse-status-line ""))))
 
 (test the-driver-truncates-its-output-file-between-retries
   ;; curl -o file --retry, and the reason the driver says :RETRY-STREAMED and

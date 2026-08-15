@@ -23,7 +23,7 @@
 ;;;;   libcurl owns the copy -- which also makes a duplicated handle safe.  The
 ;;;;   size has to be set first, because libcurl reads it when the copy is made.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 (defgeneric handle-pointer (handle)
   (:documentation

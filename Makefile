@@ -1,4 +1,4 @@
-# Makefile for libcurl.
+# Makefile for curlcl.
 #
 # Targets:
 #   make build   build the bin/curlcl executable
@@ -23,17 +23,17 @@ BIN  := bin/curlcl
 all: test
 
 # Build the curl-compatible driver via ASDF's program-op.  The output path and
-# entry point are declared in the libcurl/cli system.
+# entry point are declared in the curlcl/cli system.
 build:
-	$(LISP) --non-interactive --eval '(asdf:make :libcurl/cli)'
+	$(LISP) --non-interactive --eval '(asdf:make :curlcl/cli)'
 	@echo "built $(BIN)"
 
 # Run the suite, exiting non-zero if any check fails.  RUN-TESTS explains the
 # failures and returns the status; fiveam:run! alone would exit 0 on failure.
 test:
 	$(LISP) --non-interactive \
-	  --eval '(asdf:load-system :libcurl/test)' \
-	  --eval '(uiop:quit (if (libcurl/test:run-tests) 0 1))'
+	  --eval '(asdf:load-system :curlcl/test)' \
+	  --eval '(uiop:quit (if (curlcl/test:run-tests) 0 1))'
 
 deps:
 	ocicl install
@@ -43,8 +43,8 @@ deps:
 # files are committed so a build never depends on headers being installed.
 tables:
 	$(LISP) --non-interactive \
-	  --eval '(asdf:load-system :libcurl/generator)' \
-	  --eval '(libcurl/generator:generate-tables)'
+	  --eval '(asdf:load-system :curlcl/generator)' \
+	  --eval '(curlcl/generator:generate-tables)'
 
 clean:
 	rm -f $(BIN)

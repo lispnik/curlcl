@@ -19,11 +19,11 @@
 ;;;;   --write-out understands the variables listed in WRITE-OUT-VALUE rather
 ;;;;   than curl's full set.
 
-(defpackage #:libcurl/cli
+(defpackage #:curlcl/cli
   (:use #:cl)
   (:export #:main))
 
-(in-package #:libcurl/cli)
+(in-package #:curlcl/cli)
 
 (defparameter *program-name* "curlcl")
 (defparameter *program-version* "0.1.0")
@@ -104,7 +104,7 @@ which under --parallel would shuffle the bodies together."
 
 (defun url-filename (url)
   "The last path segment of URL, for --remote-name."
-  (let* ((parts (libcurl:parse-url url))
+  (let* ((parts (curlcl:parse-url url))
          (path (or (getf parts :path) "/"))
          (slash (position #\/ path :from-end t))
          (name (if slash (subseq path (1+ slash)) path)))
@@ -114,22 +114,22 @@ which under --parallel would shuffle the bodies together."
 
 (defun write-out-value (variable response)
   "The value of a --write-out %{variable}, or NIL if we do not know it."
-  (let ((timings (libcurl:response-timings response)))
+  (let ((timings (curlcl:response-timings response)))
     (flet ((seconds (key) (/ (or (getf timings key) 0) 1000000.0d0)))
       (cond
-        ((string= variable "http_code") (libcurl:response-status response))
-        ((string= variable "response_code") (libcurl:response-status response))
-        ((string= variable "url_effective") (libcurl:response-url response))
+        ((string= variable "http_code") (curlcl:response-status response))
+        ((string= variable "response_code") (curlcl:response-status response))
+        ((string= variable "url_effective") (curlcl:response-url response))
         ((string= variable "content_type")
-         (or (libcurl:response-content-type response) ""))
-        ((string= variable "num_redirects") (libcurl:response-redirect-count response))
+         (or (curlcl:response-content-type response) ""))
+        ((string= variable "num_redirects") (curlcl:response-redirect-count response))
         ;; From getinfo, not the body: with -o the body was streamed to a file
         ;; and never buffered, so its length would be zero.
-        ((string= variable "size_download") (libcurl:response-size-download response))
-        ((string= variable "size_upload") (libcurl:response-size-upload response))
+        ((string= variable "size_download") (curlcl:response-size-download response))
+        ((string= variable "size_upload") (curlcl:response-size-upload response))
         ;; curl prints the bare version -- "2", "1.1" -- not the keyword.
         ((string= variable "http_version")
-         (case (libcurl:response-version response)
+         (case (curlcl:response-version response)
            (:http/1.0 "1.0") (:http/1.1 "1.1") (:http/2 "2") (:http/3 "3")
            (t "0")))
         ((string= variable "time_total") (format nil "~,6F" (seconds :total)))
@@ -219,9 +219,9 @@ Accepts curl's forms: name=value, name=@path, and a ;type= suffix on either."
 
 (defun append-query (url data)
   "Append DATA to URL's query string, for -G."
-  (libcurl:with-url (parsed url)
-    (setf (libcurl:url-part parsed :query :append-query) data)
-    (libcurl:url-string parsed)))
+  (curlcl:with-url (parsed url)
+    (setf (curlcl:url-part parsed :query :append-query) data)
+    (curlcl:url-string parsed)))
 
 (defun retry-specification (command)
   (let ((count (clingon:getopt command :retry)))
@@ -309,9 +309,9 @@ Accepts curl's forms: name=value, name=@path, and a ;type= suffix on either."
 
 (defun exit-code-for (condition)
   "The CURLcode CONDITION carries, or 2 for anything else -- as curl does."
-  (if (and (typep condition 'libcurl:curl-error)
-           (integerp (libcurl:curl-error-code condition)))
-      (libcurl:curl-error-code condition)
+  (if (and (typep condition 'curlcl:curl-error)
+           (integerp (curlcl:curl-error-code condition)))
+      (curlcl:curl-error-code condition)
       2))
 
 (defun report-response (command response)
@@ -324,7 +324,7 @@ script relying on that would otherwise get silence."
     (when format
       (write-string (expand-write-out format response) *standard-output*)
       (finish-output *standard-output*)))
-  (let ((status (libcurl:response-status response)))
+  (let ((status (curlcl:response-status response)))
     (cond ((and (clingon:getopt command :fail) (<= 400 status))
            (unless (clingon:getopt command :silent)
              (message "The requested URL returned error: ~D" status))
@@ -415,7 +415,7 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
          (let ((code (parse-status-line line)))
            (when code (setf (car status) code)))
          (when (and include (not (suppressed-p)))
-           (write-sequence (libcurl::coerce-to-octets
+           (write-sequence (curlcl::coerce-to-octets
                             (format nil "~A~C~C" line #\Return #\Newline))
                            ;; Asked for per write rather than closed over, so a
                            ;; reset between attempts is picked up here.
@@ -455,7 +455,7 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
                                   url))
                (progress (progress-reporter command)))
           (multiple-value-bind (on-header on-data) (make-sinks command sink)
-           (let ((response (apply #'libcurl:request effective-url
+           (let ((response (apply #'curlcl:request effective-url
                                   :on-data on-data
                                   :on-header on-header
                                   ;; The body is streamed, so the library
@@ -471,7 +471,7 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
                                    options))))
              (when progress (format *error-output* "~%"))
              (report-response command response)))))
-    (libcurl:curl-error (condition)
+    (curlcl:curl-error (condition)
       (unless (and (clingon:getopt command :silent)
                    (not (clingon:getopt command :show-error)))
         (message "~A" condition))
@@ -495,7 +495,7 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
                                           :on-header on-header
                                           :retry-streamed t
                                           (request-options command)))))))
-           (loop for outcome in (libcurl:request-many
+           (loop for outcome in (curlcl:request-many
                                  requests
                                  ;; The batch hook rather than a per-request
                                  ;; one, because REQUEST-MANY reports retries
@@ -508,7 +508,7 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
                                  :max-connections
                                  (or (clingon:getopt command :parallel-max) 8))
                  for url in urls
-                 do (let ((code (if (typep outcome 'libcurl:response)
+                 do (let ((code (if (typep outcome 'curlcl:response)
                                     (report-response command outcome)
                                     (progn
                                       (unless (clingon:getopt command :silent)
@@ -542,19 +542,19 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
   "Print a version banner in curl -V's shape."
   (format t "~A ~A (~A) libcurl/~A~@[ ~A~]~%"
           *program-name* *program-version*
-          (or (libcurl::version-info-host (libcurl:libcurl-version-info)) "unknown")
-          (libcurl:libcurl-version)
-          (libcurl::version-info-ssl-version (libcurl:libcurl-version-info)))
+          (or (curlcl::version-info-host (curlcl:libcurl-version-info)) "unknown")
+          (curlcl:libcurl-version)
+          (curlcl::version-info-ssl-version (curlcl:libcurl-version-info)))
   (format t "Release-Date: ~A~%" "unreleased")
   ;; Not something curl reports, but this binding can load any of several
   ;; libcurls -- and on macOS the one in the dyld shared cache differs from
   ;; Homebrew's in version, TLS backend and protocol support -- so saying which
   ;; one is in use turns a confusing class of bug into an obvious one.
-  (format t "Library: ~A~%" (libcurl:libcurl-pathname))
-  (format t "Protocols: ~{~A~^ ~}~%" (libcurl:libcurl-protocols))
+  (format t "Library: ~A~%" (curlcl:libcurl-pathname))
+  (format t "Protocols: ~{~A~^ ~}~%" (curlcl:libcurl-protocols))
   (format t "Features: ~{~A~^ ~}~%"
           (sort (mapcar #'string-downcase
-                        (mapcar #'symbol-name (libcurl:libcurl-features)))
+                        (mapcar #'symbol-name (curlcl:libcurl-features)))
                 #'string<)))
 
 (defun options ()

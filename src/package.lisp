@@ -1,4 +1,4 @@
-;;;; src/package.lisp — the single LIBCURL package.
+;;;; src/package.lisp — the single CURLCL package.
 ;;;;
 ;;;; One package for the whole library, per the usual convention here.  The
 ;;;; CURL nickname is what callers actually type.  Foreign symbols are never
@@ -6,7 +6,7 @@
 ;;;; is a hand-written wrapper that takes Lisp values and signals Lisp
 ;;;; conditions.
 
-(defpackage #:libcurl
+(defpackage #:curlcl
   (:nicknames #:curl)
   (:use #:cl)
   (:export

@@ -8,7 +8,7 @@
 ;;;; needs curl headers -- and the test suite checks this table against
 ;;;; whatever libcurl is actually loaded, which is what catches drift.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 (register-options
   '(

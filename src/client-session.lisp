@@ -17,7 +17,7 @@
 ;;;; callbacks afterwards -- but it keeps the connection cache, which closing
 ;;;; and reopening the handle would throw away.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 (defgeneric session-share (session)
   (:documentation

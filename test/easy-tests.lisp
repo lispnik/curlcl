@@ -5,7 +5,7 @@
 ;;;; truncated, redirecting, slow), because those are exactly the cases a
 ;;;; public endpoint cannot be asked for on demand.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (in-suite easy)
 
@@ -261,11 +261,11 @@
 ;;; Lifetime ------------------------------------------------------------------
 
 (test closing-a-handle-releases-its-registry-key
-  (let ((before (libcurl::live-callback-count)))
+  (let ((before (curlcl::live-callback-count)))
     (let ((handle (make-easy-handle)))
-      (is (= (1+ before) (libcurl::live-callback-count)))
+      (is (= (1+ before) (curlcl::live-callback-count)))
       (close-handle handle)
-      (is (= before (libcurl::live-callback-count))))))
+      (is (= before (curlcl::live-callback-count))))))
 
 (test closing-twice-is-harmless
   (let ((handle (make-easy-handle)))
@@ -278,29 +278,29 @@
   ;; on the Lisp side of the boundary.
   (let ((handle (make-easy-handle)))
     (close-handle handle)
-    (signals libcurl::handle-closed (setopt handle :url "http://example.com/"))
-    (signals libcurl::handle-closed (perform handle))
-    (signals libcurl::handle-closed (getinfo handle :response-code))))
+    (signals curlcl::handle-closed (setopt handle :url "http://example.com/"))
+    (signals curlcl::handle-closed (perform handle))
+    (signals curlcl::handle-closed (getinfo handle :response-code))))
 
 (test many-handles-do-not-leak-keys-or-resources
   ;; The accounting that stands in for a finalizer: create and destroy enough
   ;; handles that a leak of one key per handle would be obvious.
-  (let ((before (libcurl::live-callback-count)))
+  (let ((before (curlcl::live-callback-count)))
     (dotimes (i 500)
       (let ((handle (make-easy-handle)))
         (setopts handle :url (test-url "/ok") :httpheader '("X-A: 1" "X-B: 2"))
         (setf (callback-function handle :write) (lambda (o) (declare (ignore o)) t))
         (close-handle handle)))
-    (is (= before (libcurl::live-callback-count)))))
+    (is (= before (curlcl::live-callback-count)))))
 
 (test released-keys-are-reused-rather-than-growing-without-bound
   (let ((first-key nil))
     (let ((handle (make-easy-handle)))
-      (setf first-key (libcurl::cb-key (libcurl::handle-callbacks handle)))
+      (setf first-key (curlcl::cb-key (curlcl::handle-callbacks handle)))
       (close-handle handle))
     (let ((handle (make-easy-handle)))
       (unwind-protect
-           (is (= first-key (libcurl::cb-key (libcurl::handle-callbacks handle))))
+           (is (= first-key (curlcl::cb-key (curlcl::handle-callbacks handle))))
         (close-handle handle)))))
 
 (test resetting-a-handle-keeps-it-usable
@@ -313,7 +313,7 @@
       (is (string= "ok" (body-string (funcall body))))
       (reset-handle handle)
       ;; The private key must survive, or the handle can no longer be traced.
-      (is (eq handle (libcurl::handle-from-pointer (handle-pointer handle))))
+      (is (eq handle (curlcl::handle-from-pointer (handle-pointer handle))))
       (let ((second (collect-body handle)))
         (setopt handle :url (test-url "/status/418"))
         (perform handle)
@@ -408,8 +408,8 @@
   ;; a per-handle key could only serve one.
   (with-easy (handle)
     (let ((body (collect-body handle))
-          (first-remaining (libcurl::coerce-to-octets "streamed-one"))
-          (second-remaining (libcurl::coerce-to-octets "streamed-two")))
+          (first-remaining (curlcl::coerce-to-octets "streamed-one"))
+          (second-remaining (curlcl::coerce-to-octets "streamed-two")))
       (setopt handle :url (test-url "/echo"))
       (let ((mime (make-mime handle)))
         (add-streaming-mime-part
@@ -438,12 +438,12 @@
             "the second streaming part did not get its own reader")))))
 
 (test streaming-mime-keys-are-released-with-the-handle
-  (let ((before (libcurl::live-callback-count)))
+  (let ((before (curlcl::live-callback-count)))
     (let ((handle (make-easy-handle)))
       (let ((mime (make-mime handle)))
         (add-streaming-mime-part mime :name "a" :reader (lambda (n) (declare (ignore n)) :eof))
         (add-streaming-mime-part mime :name "b" :reader (lambda (n) (declare (ignore n)) :eof)))
       ;; The handle's own key plus one per streaming part.
-      (is (= (+ before 3) (libcurl::live-callback-count)))
+      (is (= (+ before 3) (curlcl::live-callback-count)))
       (close-handle handle))
-    (is (= before (libcurl::live-callback-count)))))
+    (is (= before (curlcl::live-callback-count)))))

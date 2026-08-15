@@ -11,7 +11,7 @@
 ;;;; original as its cause.  That way the caller sees their own FILE-ERROR
 ;;;; rather than the CURLE_WRITE_ERROR libcurl reports for it.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 (define-condition curl-condition (condition)
   ()

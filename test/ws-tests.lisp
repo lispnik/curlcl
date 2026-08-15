@@ -6,7 +6,7 @@
 ;;;; either way, and a red suite on a machine whose libcurl simply lacks the
 ;;;; feature would train people to ignore it.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (in-suite websockets)
 
@@ -31,7 +31,7 @@ than a failure, so the caller polls."
 (defun receive-with-retry (handle &key (attempts 400))
   (multiple-value-bind (octets frame) (receive-octets-with-retry handle
                                                                  :attempts attempts)
-    (values (when octets (libcurl::octets-to-string octets)) frame)))
+    (values (when octets (curlcl::octets-to-string octets)) frame)))
 
 (test sha1-matches-the-published-vectors
   ;; The handshake depends on the SHA-1 in ws-server.lisp, which is hand

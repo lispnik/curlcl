@@ -1,6 +1,6 @@
 ;;;; test/share-tests.lisp — shared cookies, DNS, TLS sessions and connections.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (in-suite share)
 
@@ -25,16 +25,16 @@
   ;; installs them, so this checks the registry entry exists rather than
   ;; leaving it to the caller to remember.
   (with-share (share)
-    (is (not (null (libcurl::share-callbacks share))))
-    (is (plusp (libcurl::cb-key (libcurl::share-callbacks share))))
-    (is (= libcurl::+lock-data-count+ (length (libcurl::share-locks share))))))
+    (is (not (null (curlcl::share-callbacks share))))
+    (is (plusp (curlcl::cb-key (curlcl::share-callbacks share))))
+    (is (= curlcl::+lock-data-count+ (length (curlcl::share-locks share))))))
 
 (test a-share-releases-its-registry-key
-  (let ((before (libcurl::live-callback-count)))
+  (let ((before (curlcl::live-callback-count)))
     (with-share (share)
       (is (not (null share)))
-      (is (= (1+ before) (libcurl::live-callback-count))))
-    (is (= before (libcurl::live-callback-count)))))
+      (is (= (1+ before) (curlcl::live-callback-count))))
+    (is (= before (curlcl::live-callback-count)))))
 
 (test data-types-can-be-added-and-removed
   (with-share (share :share '(:dns))

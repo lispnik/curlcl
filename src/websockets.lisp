@@ -16,7 +16,7 @@
 ;;;; PERFORM does the HTTP upgrade and stops, after which frames are exchanged
 ;;;; with WS-SEND and WS-RECEIVE rather than through the write callback.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 (cffi:defcfun ("curl_ws_recv" %curl-ws-recv) :int
   (handle :pointer) (buffer :pointer) (buflen :size)

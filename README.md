@@ -1,8 +1,8 @@
-# libcurl binding for Common Lisp
+# curlcl — a libcurl binding for Common Lisp
 
 libcurl is installed everywhere already, make use of it
 
-[![CI](https://github.com/lispnik/libcurl/actions/workflows/ci.yml/badge.svg)](https://github.com/lispnik/libcurl/actions/workflows/ci.yml)
+[![CI](https://github.com/lispnik/curlcl/actions/workflows/ci.yml/badge.svg)](https://github.com/lispnik/curlcl/actions/workflows/ci.yml)
 
 A comprehensive Common Lisp binding to libcurl — the easy interface with all
 308 of its options and 78 info values, multi, share, the URL parser, MIME,
@@ -46,7 +46,7 @@ ocicl install
 Then:
 
 ```lisp
-(asdf:load-system :libcurl)
+(asdf:load-system :curlcl)
 ```
 
 Needs libcurl and `cffi-libffi`. On macOS the binding prefers Homebrew's
@@ -55,7 +55,7 @@ websocket support; set `LIBCURL_LIBRARY` to pin a specific one.
 
 ## Usage
 
-The package is `libcurl`, nicknamed `curl`.
+The package is `curlcl`, nicknamed `curl`.
 
 ```lisp
 (curl:http-get "https://example.com/")

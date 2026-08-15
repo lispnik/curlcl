@@ -30,7 +30,7 @@
 ;;;; so three cifs are prepared once and shared.  A cif is read-only during
 ;;;; ffi_call, so sharing them across threads is safe.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defun %check-libffi-bindings ()

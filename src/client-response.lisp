@@ -11,7 +11,7 @@
 ;;;; repeat and least safe to lose, so lookup is a scan over an ordered vector
 ;;;; -- and a response has a handful of headers, not thousands.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 (defgeneric response-status (response)
   (:documentation "The HTTP status code, as an integer."))

@@ -11,7 +11,7 @@
 ;;;; concurrently and on a machine where anything might already be listening.
 ;;;; Keep-alive is supported because connection reuse is a thing worth testing.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (defstruct (test-server (:conc-name server-))
   port
@@ -132,7 +132,7 @@ would hang waiting for a body it had already been sent."
 (defun babel-encode (string)
   "UTF-8 octets for STRING, without pulling in a dependency for it."
   (cffi:with-foreign-string ((pointer length) string :null-terminated-p nil)
-    (libcurl::foreign-to-octets pointer length)))
+    (curlcl::foreign-to-octets pointer length)))
 
 (defun status-text (status)
   (case status

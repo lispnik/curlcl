@@ -11,7 +11,7 @@
 ;;;; one that must be rejected.  Garbage on the stack cannot reproduce a
 ;;;; boundary, so passing these means the value genuinely arrived.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (in-suite varargs)
 
@@ -31,7 +31,7 @@
 ;; these tests deliberately work below the EASY-HANDLE layer -- proving the ABI
 ;; is a precondition for trusting anything built on top of it.
 (defmacro with-raw-handle ((var) &body body)
-  `(libcurl::with-raw-easy (,var) ,@body))
+  `(curlcl::with-raw-easy (,var) ,@body))
 
 (test setopt-long-passes-the-exact-value
   ;; CURLOPT_HTTP_VERSION accepts a sparse, non-contiguous set -- 0-5 are the
@@ -55,26 +55,26 @@
                              (set-difference '(3 4 5) http2)
                              (set-difference '(30 31) http3))))
       (dolist (version accepted)
-        (is (eq :ok (curlcode-keyword (libcurl::%setopt-long h +opt-http-version+ version)))
+        (is (eq :ok (curlcode-keyword (curlcl::%setopt-long h +opt-http-version+ version)))
             "CURLOPT_HTTP_VERSION ~D should be accepted" version))
       (dolist (version rejected)
         (is (eq :unsupported-protocol
-                (curlcode-keyword (libcurl::%setopt-long h +opt-http-version+ version)))
+                (curlcode-keyword (curlcl::%setopt-long h +opt-http-version+ version)))
             "CURLOPT_HTTP_VERSION ~D should be rejected as unsupported" version))
       (is (eq :bad-function-argument
-              (curlcode-keyword (libcurl::%setopt-long h +opt-http-version+ -1)))))))
+              (curlcode-keyword (curlcl::%setopt-long h +opt-http-version+ -1)))))))
 
 (test setopt-long-preserves-sign
   ;; The sign boundary is sharp where the upper bounds are not: libcurl clamps
   ;; large timeouts but rejects negative ones outright.  A truncated or
   ;; wrongly-widened argument shows up here as a sign flip.
   (with-raw-handle (h)
-    (is (eq :ok (curlcode-keyword (libcurl::%setopt-long h +opt-timeout+ 0))))
-    (is (eq :ok (curlcode-keyword (libcurl::%setopt-long h +opt-timeout+ 30))))
+    (is (eq :ok (curlcode-keyword (curlcl::%setopt-long h +opt-timeout+ 0))))
+    (is (eq :ok (curlcode-keyword (curlcl::%setopt-long h +opt-timeout+ 30))))
     (is (eq :bad-function-argument
-            (curlcode-keyword (libcurl::%setopt-long h +opt-timeout+ -1))))
+            (curlcode-keyword (curlcl::%setopt-long h +opt-timeout+ -1))))
     (is (eq :bad-function-argument
-            (curlcode-keyword (libcurl::%setopt-long h +opt-timeout+ -2))))))
+            (curlcode-keyword (curlcl::%setopt-long h +opt-timeout+ -2))))))
 
 (test setopt-off-t-passes-a-full-64-bit-value
   ;; 0x180000000 is positive as a 64-bit value but its low 32 bits are
@@ -84,12 +84,12 @@
   ;; Accepting it proves the whole 64 bits crossed the boundary.
   (with-raw-handle (h)
     (is (eq :ok (curlcode-keyword
-                 (libcurl::%setopt-off-t h +opt-maxfilesize-large+ #x180000000))))
+                 (curlcl::%setopt-off-t h +opt-maxfilesize-large+ #x180000000))))
     (is (eq :ok (curlcode-keyword
-                 (libcurl::%setopt-off-t h +opt-maxfilesize-large+ 0))))
+                 (curlcl::%setopt-off-t h +opt-maxfilesize-large+ 0))))
     (is (eq :bad-function-argument
             (curlcode-keyword
-             (libcurl::%setopt-off-t h +opt-maxfilesize-large+ -1))))))
+             (curlcl::%setopt-off-t h +opt-maxfilesize-large+ -1))))))
 
 (test setopt-and-getinfo-round-trip-a-pointer
   ;; CURLOPT_PRIVATE stores an opaque pointer and CURLINFO_PRIVATE hands it
@@ -99,8 +99,8 @@
   (with-raw-handle (h)
     (let ((value (cffi:make-pointer #x00007F1234ABCD00)))
       (is (eq :ok (curlcode-keyword
-                   (libcurl::%setopt-pointer h +opt-private+ value))))
-      (multiple-value-bind (got code) (libcurl::%raw-getinfo-pointer h +info-private+)
+                   (curlcl::%setopt-pointer h +opt-private+ value))))
+      (multiple-value-bind (got code) (curlcl::%raw-getinfo-pointer h +info-private+)
         (is (eq :ok (curlcode-keyword code)))
         (is (cffi:pointer-eq value got)
             "CURLOPT_PRIVATE round-trip: set ~A, got ~A" value got)))))
@@ -112,9 +112,9 @@
   ;; is not a valid string pointer, and reading it as one would fault.
   (with-raw-handle (h)
     (let ((value (cffi:make-pointer 8)))
-      (libcurl::%setopt-pointer h +opt-private+ value)
+      (curlcl::%setopt-pointer h +opt-private+ value)
       (is (cffi:pointer-eq value
-                           (libcurl::%raw-getinfo-pointer h +info-private+))))))
+                           (curlcl::%raw-getinfo-pointer h +info-private+))))))
 
 (test setopt-string-takes-effect
   ;; A string option that libcurl parses: a bad URL is rejected at setopt time
@@ -122,9 +122,9 @@
   ;; libcurl would be parsing whatever the stack held.
   (with-raw-handle (h)
     (is (eq :ok (curlcode-keyword
-                 (libcurl::%raw-setopt-string h +opt-url+ "https://example.com/"))))
+                 (curlcl::%raw-setopt-string h +opt-url+ "https://example.com/"))))
     (multiple-value-bind (url code)
-        (libcurl::%raw-getinfo-string h +info-effective-url+)
+        (curlcl::%raw-getinfo-string h +info-effective-url+)
       ;; EFFECTIVE_URL is only guaranteed after a transfer; before one, libcurl
       ;; may report the URL as set or nothing at all.  Accept either, but if it
       ;; reports anything it must be what we set.
@@ -138,16 +138,16 @@
   ;; arriving as the second fixed argument.
   (with-raw-handle (h)
     (is (eq :unknown-option
-            (curlcode-keyword (libcurl::%setopt-long h 999999 1))))))
+            (curlcode-keyword (curlcl::%setopt-long h 999999 1))))))
 
 (test getinfo-long-uses-a-full-width-out-parameter
   ;; CURLINFO_LONG out-parameters are C `long', 8 bytes here.  Passing a 4-byte
   ;; buffer would let libcurl write over the adjacent word; this reads a known
   ;; info and checks the value is sane rather than sign-garbage.
   (with-raw-handle (h)
-    (libcurl::%raw-setopt-string h +opt-url+ "https://example.com/")
+    (curlcl::%raw-setopt-string h +opt-url+ "https://example.com/")
     (multiple-value-bind (code result)
-        (libcurl::%raw-getinfo-long h #x200002) ; CURLINFO_RESPONSE_CODE
+        (curlcl::%raw-getinfo-long h #x200002) ; CURLINFO_RESPONSE_CODE
       (is (eq :ok (curlcode-keyword result)))
       ;; No transfer has run, so it must be exactly 0 -- not uninitialised.
       (is (= 0 code)))))
@@ -156,14 +156,14 @@
   ;; Three trailing argument types exist across the whole libcurl API; if one
   ;; were missing, the first call needing it would fail at runtime rather than
   ;; at load.
-  (is (= 3 (hash-table-count libcurl::*variadic-cifs*)))
+  (is (= 3 (hash-table-count curlcl::*variadic-cifs*)))
   (dolist (type '(:pointer :long :int64))
-    (is (not (null (gethash type libcurl::*variadic-cifs*)))
+    (is (not (null (gethash type curlcl::*variadic-cifs*)))
         "no prepared cif for trailing type ~S" type)))
 
 (test variadic-entry-points-resolved
-  (dolist (symbol '(libcurl::*setopt-function* libcurl::*getinfo-function*
-                    libcurl::*multi-setopt-function* libcurl::*share-setopt-function*))
+  (dolist (symbol '(curlcl::*setopt-function* curlcl::*getinfo-function*
+                    curlcl::*multi-setopt-function* curlcl::*share-setopt-function*))
     (let ((pointer (symbol-value symbol)))
       (is (not (null pointer)) "~S is NIL" symbol)
       (is (not (cffi:null-pointer-p pointer)) "~S is a null pointer" symbol))))

@@ -15,7 +15,7 @@
 ;;;; answer about an ordinary URL, so those come back as NIL.  Malformed input
 ;;;; still signals.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 (cffi:defcfun ("curl_url" %curl-url) :pointer)
 (cffi:defcfun ("curl_url_cleanup" %curl-url-cleanup) :void (handle :pointer))

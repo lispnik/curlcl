@@ -55,8 +55,8 @@ jobs:
           sbcl --non-interactive \
             --load "$HOME/.local/share/ocicl/ocicl-runtime.lisp" \
             --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' \
-            --eval '(asdf:load-system :libcurl)' \
-            --eval '(format t "~&libcurl ~A at ~A~%protocols: ~A~%features: ~A~%" (libcurl:libcurl-version) (libcurl:libcurl-pathname) (libcurl:libcurl-protocols) (libcurl:libcurl-features))'
+            --eval '(asdf:load-system :curlcl)' \
+            --eval '(format t "~&libcurl ~A at ~A~%protocols: ~A~%features: ~A~%" (curlcl:libcurl-version) (curlcl:libcurl-pathname) (curlcl:libcurl-protocols) (curlcl:libcurl-features))'
 
       # Built before the tests, because the CLI suite runs the real binary and
       # skips the end-to-end cases when it is missing.
@@ -65,7 +65,7 @@ jobs:
           sbcl --non-interactive \
             --load "$HOME/.local/share/ocicl/ocicl-runtime.lisp" \
             --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' \
-            --eval '(asdf:make :libcurl/cli)'
+            --eval '(asdf:make :curlcl/cli)'
           ./bin/curlcl -V
           ./bin/curlcl -s -o /dev/null -w 'smoke: %{http_code} in %{time_total}s\n' https://example.com/
 
@@ -74,8 +74,8 @@ jobs:
           sbcl --non-interactive \
             --load "$HOME/.local/share/ocicl/ocicl-runtime.lisp" \
             --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' \
-            --eval '(asdf:load-system :libcurl/test)' \
-            --eval '(uiop:quit (if (libcurl/test:run-tests) 0 1))'
+            --eval '(asdf:load-system :curlcl/test)' \
+            --eval '(uiop:quit (if (curlcl/test:run-tests) 0 1))'
 
   # Windows runs the same suite as the Unix jobs.  It is a separate job rather
   # than a matrix entry because everything around the tests differs: SBCL comes
@@ -142,8 +142,8 @@ jobs:
           sbcl --non-interactive `
             --load "$env:USERPROFILE\AppData\Local\ocicl\ocicl-runtime.lisp" `
             --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' `
-            --eval '(asdf:load-system :libcurl)' `
-            --eval '(format t "~&libcurl ~A at ~A~%" (libcurl:libcurl-version) (libcurl:libcurl-pathname))'
+            --eval '(asdf:load-system :curlcl)' `
+            --eval '(format t "~&libcurl ~A at ~A~%" (curlcl:libcurl-version) (curlcl:libcurl-pathname))'
 
       # Same reason as the Unix jobs: the CLI suite runs the real binary and
       # skips its end-to-end cases when there isn't one.
@@ -153,7 +153,7 @@ jobs:
           sbcl --non-interactive `
             --load "$env:USERPROFILE\AppData\Local\ocicl\ocicl-runtime.lisp" `
             --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' `
-            --eval '(asdf:make :libcurl/cli)'
+            --eval '(asdf:make :curlcl/cli)'
           Get-ChildItem bin
           $exe = (Get-ChildItem bin\curlcl* | Select-Object -First 1).FullName
           & $exe -V
@@ -169,5 +169,5 @@ jobs:
           sbcl --non-interactive `
             --load "$env:USERPROFILE\AppData\Local\ocicl\ocicl-runtime.lisp" `
             --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' `
-            --eval '(asdf:load-system :libcurl/test)' `
-            --eval '(uiop:quit (if (libcurl/test:run-tests) 0 1))'
+            --eval '(asdf:load-system :curlcl/test)' `
+            --eval '(uiop:quit (if (curlcl/test:run-tests) 0 1))'

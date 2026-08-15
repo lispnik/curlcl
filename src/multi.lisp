@@ -19,7 +19,7 @@
 ;;;; legacy "call me again immediately" signal.  Any check that treats non-zero
 ;;;; as failure has to special-case it.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 (cffi:defcfun ("curl_multi_init" %curl-multi-init) :pointer)
 (cffi:defcfun ("curl_multi_cleanup" %curl-multi-cleanup) :int (multi :pointer))

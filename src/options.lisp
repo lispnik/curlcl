@@ -21,7 +21,7 @@
 ;;;; CURLE_UNKNOWN_OPTION, each option is checked once against
 ;;;; curl_easy_option_by_name and the result cached on the entry.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 (defstruct (curl-option (:conc-name option-))
   "One entry of libcurl's option table."

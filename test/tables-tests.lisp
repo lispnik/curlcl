@@ -11,7 +11,7 @@
 ;;;; versions, this is what says so -- which matters because the two really can
 ;;;; differ on macOS, where the Homebrew and system libcurls are years apart.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (in-suite tables)
 
@@ -29,11 +29,11 @@
   ;; libcurl legitimately adds entries, and a test that has to be edited every
   ;; time is a test that stops being read.  A parse that silently collapsed
   ;; would fall far below these.
-  (is (<= 300 (libcurl::option-count))
-      "only ~D options in the table" (libcurl::option-count))
-  (is (<= 70 (libcurl::info-count))
-      "only ~D infos in the table" (libcurl::info-count))
-  (is (<= 16 (hash-table-count libcurl::*multi-options*))))
+  (is (<= 300 (curlcl::option-count))
+      "only ~D options in the table" (curlcl::option-count))
+  (is (<= 70 (curlcl::info-count))
+      "only ~D infos in the table" (curlcl::info-count))
+  (is (<= 16 (hash-table-count curlcl::*multi-options*))))
 
 (test every-table-option-agrees-with-libcurl
   ;; The load-bearing test for the generator.  For every option this binding
@@ -41,27 +41,27 @@
   ;; identifier and argument type are, and require agreement.
   (let ((checked 0)
         (mismatches '()))
-    (libcurl::map-options
+    (curlcl::map-options
      (lambda (option)
-       (let ((c-name (subseq (libcurl::option-c-name option) (length "CURLOPT_"))))
-         (multiple-value-bind (id type) (libcurl::known-option c-name)
+       (let ((c-name (subseq (curlcl::option-c-name option) (length "CURLOPT_"))))
+         (multiple-value-bind (id type) (curlcl::known-option c-name)
            (when id
              (incf checked)
-             (unless (= id (libcurl::option-id option))
+             (unless (= id (curlcl::option-id option))
                (push (format nil "~A: table says ~D, libcurl says ~D"
-                             c-name (libcurl::option-id option) id)
+                             c-name (curlcl::option-id option) id)
                      mismatches))
-             (let ((expected (cdr (assoc (libcurl::option-kind option)
+             (let ((expected (cdr (assoc (curlcl::option-kind option)
                                          *kind-to-easytype*))))
                (unless (eq type expected)
                  (push (format nil "~A: table says ~S (~S), libcurl says ~S"
-                               c-name (libcurl::option-kind option) expected type)
+                               c-name (curlcl::option-kind option) expected type)
                        mismatches))))))))
     ;; Guard against the test passing vacuously by skipping everything.
     (is (<= 250 checked)
         "only ~D options could be checked against libcurl" checked)
     (is (null mismatches)
-        "~D option(s) disagree with the loaded libcurl:~%~{  ~A~%~}"
+        "~D option(s) disagree with the loaded curlcl:~%~{  ~A~%~}"
         (length mismatches) mismatches)))
 
 (test libcurl-has-no-options-missing-from-the-table
@@ -70,11 +70,11 @@
   ;; was generated against older headers than the library in use -- run
   ;; `make tables'.
   (let ((missing '()))
-    (libcurl::map-known-options
+    (curlcl::map-known-options
      (lambda (name id type alias-p)
        (declare (ignore id type alias-p))
        (let ((keyword (intern (substitute #\- #\_ (string-upcase name)) :keyword)))
-         (unless (libcurl::find-option keyword)
+         (unless (curlcl::find-option keyword)
            (push name missing)))))
     (is (null missing)
         "The loaded libcurl (~A) has ~D option(s) the generated table lacks; ~
@@ -86,11 +86,11 @@ run `make tables'.~%  ~{~A~^ ~}"
   ;; option of every base: long, string, function pointer, slist, callback
   ;; data, object pointer, curl_off_t and blob.
   (flet ((check (keyword id kind)
-           (let ((option (libcurl::find-option keyword)))
+           (let ((option (curlcl::find-option keyword)))
              (is (not (null option)) "~S missing from the table" keyword)
              (when option
-               (is (= id (libcurl::option-id option)))
-               (is (eq kind (libcurl::option-kind option)))))))
+               (is (= id (curlcl::option-id option)))
+               (is (eq kind (curlcl::option-kind option)))))))
     (check :url 10002 :stringpoint)
     (check :writedata 10001 :cbpoint)
     (check :writefunction 20011 :functionpoint)
@@ -108,48 +108,48 @@ run `make tables'.~%  ~{~A~^ ~}"
   ;; The generator keeps the spelled type precisely because that distinction
   ;; decides who owns the memory -- if it were lost, the table could not say
   ;; whether a value needs curl_slist_free_all or nothing at all.
-  (is (eq :stringpoint (libcurl::option-kind (libcurl::find-option :url))))
-  (is (eq :slistpoint (libcurl::option-kind (libcurl::find-option :httpheader))))
-  (is (eq :cbpoint (libcurl::option-kind (libcurl::find-option :writedata))))
-  (is (eq :objectpoint (libcurl::option-kind (libcurl::find-option :postfields))))
+  (is (eq :stringpoint (curlcl::option-kind (curlcl::find-option :url))))
+  (is (eq :slistpoint (curlcl::option-kind (curlcl::find-option :httpheader))))
+  (is (eq :cbpoint (curlcl::option-kind (curlcl::find-option :writedata))))
+  (is (eq :objectpoint (curlcl::option-kind (curlcl::find-option :postfields))))
   ;; ...yet all four are the same numeric base.
   (dolist (keyword '(:url :httpheader :writedata :postfields))
-    (is (= 10000 (* 10000 (floor (libcurl::option-id (libcurl::find-option keyword))
+    (is (= 10000 (* 10000 (floor (curlcl::option-id (curlcl::find-option keyword))
                                  10000))))))
 
 (test argument-classes-cover-every-kind
   ;; Every option in the table must map to one of the three ABI argument
   ;; classes; an unmapped kind would signal at the first setopt using it.
-  (libcurl::map-options
+  (curlcl::map-options
    (lambda (option)
-     (is (member (libcurl::option-argument-class option) '(:long :off-t :pointer))
-         "~S has no argument class" (libcurl::option-keyword option)))))
+     (is (member (curlcl::option-argument-class option) '(:long :off-t :pointer))
+         "~S has no argument class" (curlcl::option-keyword option)))))
 
 (test aliases-share-their-target-identifier
   ;; CURLOPT_ENCODING is a #define for CURLOPT_ACCEPT_ENCODING; a regex over
   ;; CURLOPT() alone would miss it, and callers do use the old spelling.
-  (let ((alias (libcurl::find-option :encoding))
-        (target (libcurl::find-option :accept-encoding)))
+  (let ((alias (curlcl::find-option :encoding))
+        (target (curlcl::find-option :accept-encoding)))
     (is (not (null alias)))
     (is (not (null target)))
-    (is (= (libcurl::option-id alias) (libcurl::option-id target)))
-    (is (eq :accept-encoding (libcurl::option-alias-of alias))))
+    (is (= (curlcl::option-id alias) (curlcl::option-id target)))
+    (is (eq :accept-encoding (curlcl::option-alias-of alias))))
   ;; These two resolve through a numeric #define rather than a named option,
   ;; which an alias pass that ran before the numeric pass would drop.
-  (is (= 9999 (libcurl::option-id (libcurl::find-option :writeinfo))))
-  (is (= 9999 (libcurl::option-id (libcurl::find-option :closepolicy)))))
+  (is (= 9999 (curlcl::option-id (curlcl::find-option :writeinfo))))
+  (is (= 9999 (curlcl::option-id (curlcl::find-option :closepolicy)))))
 
 (test deprecated-options-carry-their-replacement
-  (let ((option (libcurl::find-option :httppost)))
+  (let ((option (curlcl::find-option :httppost)))
     (is (not (null option)))
-    (is (string= "7.56.0" (libcurl::option-deprecated option)))
-    (is (search "MIMEPOST" (libcurl::option-replacement option)))))
+    (is (string= "7.56.0" (curlcl::option-deprecated option)))
+    (is (search "MIMEPOST" (curlcl::option-replacement option)))))
 
 (test unknown-options-signal-rather-than-reaching-libcurl
   ;; The point of validating up front is a report that names the option, rather
   ;; than a bare CURLE_UNKNOWN_OPTION from the far side of the ABI.
-  (signals unsupported-option (libcurl::ensure-option :no-such-option-at-all))
-  (handler-case (libcurl::ensure-option :no-such-option-at-all)
+  (signals unsupported-option (curlcl::ensure-option :no-such-option-at-all))
+  (handler-case (curlcl::ensure-option :no-such-option-at-all)
     (unsupported-option (c)
       (is (eq :no-such-option-at-all (unsupported-option-name c)))
       ;; The report must be readable; a condition nobody can print is no better
@@ -157,20 +157,20 @@ run `make tables'.~%  ~{~A~^ ~}"
       (is (plusp (length (princ-to-string c)))))))
 
 (test option-availability-is-cached-after-the-first-question
-  (let ((option (libcurl::find-option :url)))
-    (setf (libcurl::option-availability option) :unknown)
-    (is (libcurl::option-supported-p option))
-    (is (eq t (libcurl::option-availability option)))))
+  (let ((option (curlcl::find-option :url)))
+    (setf (curlcl::option-availability option) :unknown)
+    (is (curlcl::option-supported-p option))
+    (is (eq t (curlcl::option-availability option)))))
 
 ;;; Infos --------------------------------------------------------------------
 
 (test info-identifiers-encode-their-type
   (flet ((check (keyword id kind)
-           (let ((info (libcurl::find-info keyword)))
+           (let ((info (curlcl::find-info keyword)))
              (is (not (null info)) "~S missing from the info table" keyword)
              (when info
-               (is (= id (libcurl::info-id info)))
-               (is (eq kind (libcurl::info-kind info)))))))
+               (is (= id (curlcl::info-id info)))
+               (is (eq kind (curlcl::info-kind info)))))))
     (check :effective-url #x100001 :string)
     (check :response-code #x200002 :long)
     (check :total-time #x300003 :double)
@@ -182,11 +182,11 @@ run `make tables'.~%  ~{~A~^ ~}"
   ;; Every info's kind must follow from its type mask -- with exactly two
   ;; documented families of exception, both of which produce wrong answers
   ;; rather than errors if taken at face value.
-  (libcurl::map-infos
+  (curlcl::map-infos
    (lambda (info)
-     (let ((mask (libcurl::info-type-mask (libcurl::info-id info)))
-           (kind (libcurl::info-kind info))
-           (name (libcurl::info-c-name info)))
+     (let ((mask (curlcl::info-type-mask (curlcl::info-id info)))
+           (kind (curlcl::info-kind info))
+           (name (curlcl::info-c-name info)))
        (cond
          ;; CURLINFO_PRIVATE claims STRING but returns the void* stored with
          ;; CURLOPT_PRIVATE.  Decoding it as a string reads a random pointer.
@@ -200,29 +200,29 @@ run `make tables'.~%  ~{~A~^ ~}"
           (is (member kind '(:slist :pointer))
               "~A has mask 0x400000 but kind ~S" name kind))
          (t
-          (is (eq kind (cdr (assoc mask libcurl::*info-type-masks*)))
+          (is (eq kind (cdr (assoc mask curlcl::*info-type-masks*)))
               "~A: mask ~X implies ~S, table says ~S"
-              name mask (cdr (assoc mask libcurl::*info-type-masks*)) kind)))))))
+              name mask (cdr (assoc mask curlcl::*info-type-masks*)) kind)))))))
 
 (test slist-infos-are-separated-from-pointer-infos
   ;; The ownership split behind the shared 0x400000 mask.  Getting this
   ;; backwards either leaks an slist or calls curl_slist_free_all on a
   ;; structure libcurl still owns.
-  (is (eq :slist (libcurl::info-kind (libcurl::find-info :ssl-engines))))
-  (is (eq :slist (libcurl::info-kind (libcurl::find-info :cookielist))))
-  (is (eq :pointer (libcurl::info-kind (libcurl::find-info :certinfo))))
-  (is (eq :pointer (libcurl::info-kind (libcurl::find-info :tls-ssl-ptr)))))
+  (is (eq :slist (curlcl::info-kind (curlcl::find-info :ssl-engines))))
+  (is (eq :slist (curlcl::info-kind (curlcl::find-info :cookielist))))
+  (is (eq :pointer (curlcl::info-kind (curlcl::find-info :certinfo))))
+  (is (eq :pointer (curlcl::info-kind (curlcl::find-info :tls-ssl-ptr)))))
 
 (test deprecated-double-infos-have-off-t-successors
   ;; Most of the CURLINFO_DOUBLE family is superseded by _T variants; both are
   ;; kept, because code in the wild still reads the old ones.
-  (is (string= "7.55.0" (libcurl::info-deprecated (libcurl::find-info :size-upload))))
-  (is (null (libcurl::info-deprecated (libcurl::find-info :size-upload-t))))
+  (is (string= "7.55.0" (curlcl::info-deprecated (curlcl::find-info :size-upload))))
+  (is (null (curlcl::info-deprecated (curlcl::find-info :size-upload-t))))
   ;; Same ordinal, different type mask -- which is why a value->name map keyed
   ;; on the ordinal alone would collide.  (Not universal: CURLINFO_TOTAL_TIME
   ;; is ordinal 3 while CURLINFO_TOTAL_TIME_T is 50, so the pairing cannot be
   ;; assumed either.)
-  (is (= (logand #x0fffff (libcurl::info-id (libcurl::find-info :size-upload)))
-         (logand #x0fffff (libcurl::info-id (libcurl::find-info :size-upload-t)))))
-  (is (/= (libcurl::info-id (libcurl::find-info :size-upload))
-          (libcurl::info-id (libcurl::find-info :size-upload-t)))))
+  (is (= (logand #x0fffff (curlcl::info-id (curlcl::find-info :size-upload)))
+         (logand #x0fffff (curlcl::info-id (curlcl::find-info :size-upload-t)))))
+  (is (/= (curlcl::info-id (curlcl::find-info :size-upload))
+          (curlcl::info-id (curlcl::find-info :size-upload-t)))))

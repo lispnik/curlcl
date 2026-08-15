@@ -17,7 +17,7 @@
 ;;;; The strerror family lives here, ahead of the subsystems that own the rest
 ;;;; of their C API, because conditions signalled during setup need it.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 (cffi:define-foreign-library libcurl
   ;; Absolute Homebrew paths first: a bare soname would be answered by the

@@ -12,18 +12,29 @@ ocicl, FiveAM.
 
 ```
 ocicl install                 # restore dependencies (ocicl/ is gitignored)
-make test                     # load #:libcurl/test and run the suite
+make build                    # bin/curlcl, via ASDF program-op
+make test                     # load #:curlcl/test and run the suite
 CURL_LIVE_TESTS=1 make test   # additionally run the network suite
 make tables                   # regenerate the option/info tables from headers
+make clean                    # fasls + the ASDF cache for this tree
 ```
+
+`LIBCURL_LIBRARY` pins which libcurl gets loaded; on macOS the search prefers
+Homebrew's over the one in the dyld shared cache, and the two differ in
+version, TLS backend and websocket support. `curlcl -V` prints what it opened.
 
 Run one test from a REPL (FiveAM has no CLI selector):
 
 ```lisp
-(asdf:load-system :libcurl/test)
-(fiveam:run! 'libcurl/test::setopt-long-passes-the-exact-value)
-(fiveam:run! 'libcurl/test::client)     ; or a whole suite
+(asdf:load-system :curlcl/test)
+(fiveam:run! 'curlcl/test::setopt-long-passes-the-exact-value)
+(fiveam:run! 'curlcl/test::client)     ; or a whole suite
 ```
+
+`fiveam:run!` prints failures but its value says nothing a script can use, and
+ASDF discards what a `test-op` returns — so both the Makefile and the `.asd`
+go through `curlcl/test:run-tests`, which returns the status and is what makes
+a failing suite exit non-zero. Don't replace it with `run!` in a batch context.
 
 Adding a slot to a struct needs the fasl cache cleared — `:serial t` does not
 save you, and SBCL dies with "attempt to redefine the STRUCTURE-OBJECT class
@@ -31,7 +42,12 @@ incompatibly". `make clean` removes `~/.cache/common-lisp/*/$(CURDIR)`.
 
 ## Architecture
 
-Load order is significant and encoded in `libcurl.asd`:
+Four systems in one `.asd`. `#:curlcl` is the binding plus the HTTP client;
+`#:curlcl/cli` builds `bin/curlcl`; `#:curlcl/test` is the FiveAM suite;
+`#:curlcl/generator` writes two of `#:curlcl`'s source files and deliberately
+does **not** depend on it, because that would be circular the first time it runs.
+
+Load order is significant and encoded in `curlcl.asd`:
 
 ```
 package → conditions → library → types → varargs → easy-raw → memory
@@ -132,6 +148,14 @@ package → conditions → library → types → varargs → easy-raw → memory
   unchanged rather than signalling, so that surfaces as an unfamiliar error and
   not as a broken binding.
 
+- **A green run can mean three suites did not happen.** The skips are quiet and
+  each has a different trigger: `live-tests.lisp` unless `CURL_LIVE_TESTS` is
+  set, `ws-tests.lisp` when the loaded libcurl was built without `ws://`, and
+  the end-to-end half of `cli-tests.lisp` when `bin/curlcl` is absent — so
+  changing `src/cli.lisp` and running `make test` without `make build` first
+  exercises only the argument parsing. Read the skip count, not just the pass
+  count, and rebuild the binary before trusting a CLI result.
+
 - **The test server can be made to misbehave on purpose** — `/close-early`
   truncates a body, `/redirect-loop` never terminates, `/flaky` fails exactly N
   times, `/drip` trickles. When a test hangs, suspect the fixture first: a
@@ -168,10 +192,10 @@ package → conditions → library → types → varargs → easy-raw → memory
   file with a failed attempt's body in front of the real one.
 
 - **Exported symbols collide with test helpers.** Four times a test-local
-  definition has landed on an exported library symbol, because `libcurl/test`
-  uses `#:libcurl`: `with-easy`, `header-value` and `response-header` were
+  definition has landed on an exported library symbol, because `curlcl/test`
+  uses `#:curlcl`: `with-easy`, `header-value` and `response-header` were
   redefined outright, and the test server's `(defstruct request …)` put a
-  structure class on `libcurl:request` — harmless-looking, since `defstruct`
+  structure class on `curlcl:request` — harmless-looking, since `defstruct`
   does not define a function of that name, but it makes `(typep x 'request)`
   mean something the library never intended. After adding to the export list,
   re-run the whole suite, not just the new tests.

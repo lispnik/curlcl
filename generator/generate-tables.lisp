@@ -28,12 +28,12 @@
 ;;;;   - Nineteen options exist only as #define aliases and are invisible to a
 ;;;;     regex over CURLOPT(); two of those are plain numbers, not names.
 
-(defpackage #:libcurl/generator
+(defpackage #:curlcl/generator
   (:use #:cl)
   (:export #:generate-tables
            #:find-header-directory))
 
-(in-package #:libcurl/generator)
+(in-package #:curlcl/generator)
 
 ;;; Locating the headers ------------------------------------------------------
 
@@ -257,7 +257,7 @@ are the debug callback's argument and have no such bodies."
   (format stream ";;;; The committed output is what the library loads, so a build never~%")
   (format stream ";;;; needs curl headers -- and the test suite checks this table against~%")
   (format stream ";;;; whatever libcurl is actually loaded, which is what catches drift.~%~%")
-  (format stream "(in-package #:libcurl)~%~%"))
+  (format stream "(in-package #:curlcl)~%~%"))
 
 (defun print-entry (stream entry &key hex)
   ;; Written by hand rather than with ~S on the whole list so the columns line
@@ -286,7 +286,7 @@ are the debug callback's argument and have no such bodies."
         "unknown")))
 
 (defun generate-tables (&key directory (output (asdf:system-relative-pathname
-                                                :libcurl "src/")))
+                                                :curlcl "src/")))
   "Regenerate src/options-table.lisp and src/infos-table.lisp.
 
 DIRECTORY overrides where the curl headers are found."

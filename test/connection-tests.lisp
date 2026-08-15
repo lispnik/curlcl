@@ -14,7 +14,7 @@
 ;;;; sharp: if the request reaches the origin at all, the option worked, because
 ;;;; nothing else could have found it.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (in-suite connection)
 

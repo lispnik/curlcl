@@ -10,7 +10,7 @@
 ;;;; variadic and cannot be declared with DEFCFUN at all.  They are reached
 ;;;; through src/varargs.lisp.
 
-(in-package #:libcurl)
+(in-package #:curlcl)
 
 ;;; Raw bindings --------------------------------------------------------------
 

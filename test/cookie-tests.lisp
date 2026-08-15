@@ -16,7 +16,7 @@
 ;;;; binding that freed the string first would write the jar to a freed pointer,
 ;;;; and the failure would be a corrupt filename rather than a crash.
 
-(in-package #:libcurl/test)
+(in-package #:curlcl/test)
 
 (in-suite cookies)
 
