@@ -8,7 +8,7 @@
            #:all-tests
            ;; Suites.
            #:library #:types #:varargs #:tables #:easy
-           #:url #:headers #:mime #:share #:multi))
+           #:url #:headers #:mime #:share #:multi #:websockets))
 
 (in-package #:libcurl/test)
 
@@ -53,6 +53,11 @@
 
 (def-suite multi
   :description "Many transfers on one thread."
+  :in all-tests)
+
+(def-suite websockets
+  :description "Websockets, against a local echo server; skipped when the
+loaded libcurl was built without ws/wss."
   :in all-tests)
 
 (defun run-tests ()

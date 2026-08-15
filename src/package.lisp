@@ -176,4 +176,25 @@
    #:result-successful-p
    #:multi-socket-function
    #:multi-timer-function
-   #:socket-action))
+   #:socket-action
+
+   ;; Websockets.  Feature-gated at runtime: macOS ships the headers for a
+   ;; libcurl built without ws/wss, so the symbols resolve and then fail at
+   ;; connect time.  libcurl marks this API experimental; that caveat is
+   ;; passed on rather than hidden.
+   #:websockets-supported-p
+   #:ws-connect
+   #:with-websocket
+   #:ws-send
+   #:ws-send-text
+   #:ws-receive
+   #:ws-receive-text
+   #:ws-close
+   #:ws-frame-info
+   #:ws-start-frame
+   #:ws-start-frame-supported-p
+   #:ws-frame
+   #:frame-flags
+   #:frame-offset
+   #:frame-bytes-left
+   #:frame-length))

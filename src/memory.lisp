@@ -52,6 +52,20 @@ received chunk, so a per-byte loop would show up on any real download."
           do (setf (cffi:mem-aref pointer :uint8 i) (aref octets (+ start i))))
     length))
 
+(defun octets-to-string (octets &key (encoding :utf-8) (start 0)
+                                     (end (length octets)))
+  "Decode OCTETS[START:END] as text.
+
+Goes through a foreign buffer because CFFI's decoders work on foreign memory;
+the buffer is stack-allocated and released on the way out, which the obvious
+FOREIGN-ALLOC spelling of this would not be."
+  (let ((length (- end start)))
+    (if (zerop length)
+        ""
+        (cffi:with-foreign-object (buffer :uint8 length)
+          (octets-to-foreign octets buffer :start start :end end)
+          (cffi:foreign-string-to-lisp buffer :count length :encoding encoding)))))
+
 (defun coerce-to-octets (data &key (encoding :utf-8))
   "Octets for DATA, which may already be octets, or a string, or a character."
   (etypecase data
