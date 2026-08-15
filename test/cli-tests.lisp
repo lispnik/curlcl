@@ -119,6 +119,13 @@ the driver gave is in the log next to the assertion that noticed."
               arguments code (string-right-trim '(#\Newline #\Return) error-output)))
     (values output code error-output)))
 
+(defun null-device ()
+  "The path that discards what is written to it.
+
+/dev/null on Unix and NUL on Windows.  Spelled out because -o takes a path and
+gets it from the command line, so there is nothing to translate it for us."
+  (if (uiop:os-windows-p) "NUL" "/dev/null"))
+
 (defmacro with-curlcl-or-skip (&body body)
   `(if (probe-file *curlcl-binary*)
        (progn ,@body)
@@ -139,7 +146,7 @@ the driver gave is in the log next to the assertion that noticed."
   (with-curlcl-or-skip
     (multiple-value-bind (output code)
         (run-program-capturing (native-namestring-of *curlcl-binary*)
-                               (list "-s" "-o" "/dev/null"
+                               (list "-s" "-o" (null-device)
                                      "-w" "%{http_code}"
                                      (test-url "/status/418")))
       (is (= 0 code))
@@ -177,7 +184,7 @@ the driver gave is in the log next to the assertion that noticed."
       (is (string= "ok" output)))
     (multiple-value-bind (output code)
         (run-program-capturing (native-namestring-of *curlcl-binary*)
-                               (list "-s" "-o" "/dev/null" "-w" "%{http_code}"
+                               (list "-s" "-o" (null-device) "-w" "%{http_code}"
                                      (test-url "/redirect/2")))
       (is (= 0 code))
       (is (string= "302" output)))))
@@ -212,11 +219,11 @@ the driver gave is in the log next to the assertion that noticed."
                               internal-time-units-per-second 1.0)
                            code)))))
         (multiple-value-bind (sequential sequential-code)
-            (timed "-s" "-o" "/dev/null" "-o" "/dev/null"
-                   "-o" "/dev/null" "-o" "/dev/null" url url url url)
+            (timed "-s" "-o" (null-device) "-o" (null-device)
+                   "-o" (null-device) "-o" (null-device) url url url url)
           (multiple-value-bind (parallel parallel-code)
-              (timed "-s" "-Z" "-o" "/dev/null" "-o" "/dev/null"
-                     "-o" "/dev/null" "-o" "/dev/null" url url url url)
+              (timed "-s" "-Z" "-o" (null-device) "-o" (null-device)
+                     "-o" (null-device) "-o" (null-device) url url url url)
             (is (= 0 sequential-code))
             (is (= 0 parallel-code))
             ;; Four overlapping 0.2s transfers should beat four consecutive
