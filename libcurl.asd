@@ -57,7 +57,8 @@ generic CURLE_WRITE_ERROR."
                              (:file "url")        ; the URL parser
                              (:file "headers")    ; parsed response headers
                              (:file "mime")       ; multipart bodies
-                             (:file "share"))))   ; shared cookies/DNS/connections
+                             (:file "share")      ; shared cookies/DNS/connections
+                             (:file "multi"))))   ; many transfers on one thread
   :in-order-to ((test-op (test-op #:libcurl/test))))
 
 (asdf:defsystem #:libcurl/generator
@@ -103,7 +104,8 @@ generic CURLE_WRITE_ERROR."
                              (:file "url-tests")
                              (:file "headers-tests")
                              (:file "mime-tests")
-                             (:file "share-tests"))))
+                             (:file "share-tests")
+                             (:file "multi-tests"))))
   ;; ASDF ignores whatever a TEST-OP perform method returns, so reporting
   ;; failure by returning NIL would leave `asdf:test-system' -- and therefore
   ;; CI -- green on a suite that failed.  Signal.

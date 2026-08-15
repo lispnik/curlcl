@@ -71,7 +71,11 @@ null userdata libcurl passes when a *DATA option was never set.")
   ;; The closures themselves.
   write read header progress debug seek sockopt opensocket closesocket
   ssl-ctx prereq resolver-start fnmatch chunk-begin chunk-end trailer
-  hsts-read hsts-write ssh-key ssh-host-key interleave ioctl)
+  hsts-read hsts-write ssh-key ssh-host-key interleave ioctl
+  ;; Multi-handle callbacks.  They live here rather than in a separate struct
+  ;; because a multi handle registers exactly the same way an easy handle does,
+  ;; and the trampolines find both through the one registry.
+  socket timer push notify)
 
 (defun register-callback-state (state)
   "Assign STATE a key and install it.  Returns the key."

@@ -68,6 +68,7 @@
    #:handle-closed-p
    #:handle-error-buffer
    #:handle-share
+   #:handle-plist
    #:handle-from-pointer
 
    ;; Driving a transfer.
@@ -145,4 +146,34 @@
    #:share-data
    #:unshare-data
    #:attach-share
-   #:detach-share))
+   #:detach-share
+
+   ;; The multi interface.  RUN-TRANSFERS is the ordinary way in; the socket
+   ;; API below it is for embedding in an event loop that already exists.
+   #:multi-handle
+   #:make-multi
+   #:close-multi
+   #:with-multi
+   #:multi-pointer
+   #:multi-closed-p
+   #:multi-setopt
+   #:multi-transfers
+   #:add-transfer
+   #:remove-transfer
+   #:multi-perform
+   #:multi-poll
+   #:multi-wait
+   #:multi-wakeup
+   #:multi-timeout
+   #:read-multi-messages
+   #:run-transfers
+   #:signal-failed-transfers
+   #:transfer-result
+   #:result-handle
+   #:result-code
+   #:result-code-name
+   #:result-condition
+   #:result-successful-p
+   #:multi-socket-function
+   #:multi-timer-function
+   #:socket-action))

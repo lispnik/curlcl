@@ -34,6 +34,14 @@
    (callbacks :reader handle-callbacks :initform nil)
    (resources :reader handle-resources :initform nil)
    (error-buffer :reader handle-error-buffer :initform nil)
+   (plist :accessor handle-plist :initform '()
+          :documentation "Arbitrary Lisp data attached to this handle.
+
+CURLOPT_PRIVATE is not available for this -- the binding uses it to map a bare
+CURL* back to its handle -- so callers who need to associate something with a
+transfer put it here.  The multi interface makes this necessary rather than
+merely convenient: results come back as bare handles, and the caller has to
+find whatever they set up alongside.")
    (share :accessor handle-share :initform nil
           :documentation "A SHARE-HANDLE this is attached to, kept reachable so
 it cannot be collected or closed out from under the transfer.")

@@ -8,7 +8,7 @@
            #:all-tests
            ;; Suites.
            #:library #:types #:varargs #:tables #:easy
-           #:url #:headers #:mime #:share))
+           #:url #:headers #:mime #:share #:multi))
 
 (in-package #:libcurl/test)
 
@@ -49,6 +49,10 @@
 
 (def-suite share
   :description "Shared cookies, DNS, TLS sessions and connections."
+  :in all-tests)
+
+(def-suite multi
+  :description "Many transfers on one thread."
   :in all-tests)
 
 (defun run-tests ()

@@ -236,6 +236,11 @@ Transfer-Encoding: chunked~C~C~C~C"
   (force-output stream))
 
 (defun send-drip (stream count delay-ms)
+  ;; Each piece is exactly 8 bytes -- "drip" plus a 4-digit counter -- and the
+  ;; advertised length has to agree.  It did not, once: the pieces were 7 bytes
+  ;; against a promise of 8 apiece, and libcurl sat waiting for bytes that were
+  ;; never coming, which is the correct thing for it to do and looked exactly
+  ;; like a hang in the multi loop.
   (let ((body-length (* count 8)))
     (write-ascii stream (format nil "HTTP/1.1 200 OK~C~CContent-Type: text/plain~C~C~
 Content-Length: ~D~C~C~C~C"
@@ -243,7 +248,7 @@ Content-Length: ~D~C~C~C~C"
                                 body-length #\Return #\Newline #\Return #\Newline))
     (force-output stream)
     (dotimes (i count)
-      (write-ascii stream (format nil "drip~3,'0D" i))
+      (write-ascii stream (format nil "drip~4,'0D" i))
       (force-output stream)
       (sleep (/ delay-ms 1000.0)))))
 
