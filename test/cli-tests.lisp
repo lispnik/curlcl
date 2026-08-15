@@ -102,13 +102,22 @@
   "The built driver.  Tests using it skip when it has not been built.")
 
 (defun run-program-capturing (program arguments)
-  "Run PROGRAM and return (values stdout exit-code)."
+  "Run PROGRAM and return (values stdout exit-code stderr).
+
+The child's stderr used to be discarded, which made a failure here say only
+that the output was empty and the code was not zero -- no help at all when a
+whole platform's worth of these fail at once, as they did the first time this
+suite ran on Windows.  It is echoed to the test output instead, so the reason
+the driver gave is in the log next to the assertion that noticed."
   (multiple-value-bind (output error-output code)
       (uiop:run-program (cons program arguments)
                         :output :string :error-output :string
                         :ignore-error-status t)
-    (declare (ignore error-output))
-    (values output code)))
+    (when (plusp (length (string-trim '(#\Space #\Tab #\Newline #\Return)
+                                      error-output)))
+      (format *test-dribble* "~&[curlcl~{ ~A~}] exit ~D, stderr: ~A~%"
+              arguments code (string-right-trim '(#\Newline #\Return) error-output)))
+    (values output code error-output)))
 
 (defmacro with-curlcl-or-skip (&body body)
   `(if (probe-file *curlcl-binary*)
