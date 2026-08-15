@@ -1,9 +1,10 @@
-;;;; src/easy.lisp — the easy interface.
+;;;; src/easy-raw.lisp — raw bindings for the easy interface.
 ;;;;
-;;;; This file currently holds the raw foreign bindings and the lowest-level
-;;;; option/info accessors, which take numeric option identifiers.  The typed,
-;;;; keyword-driven API and the EASY-HANDLE class are layered on top of the
-;;;; generated option table.
+;;;; The unadorned foreign layer: DEFCFUNs, libcurl's own option introspection,
+;;;; and getinfo accessors that take numeric identifiers.  It loads before the
+;;;; option tables because they are validated against the introspection
+;;;; functions here; the keyword-driven API and the EASY-HANDLE class are built
+;;;; on top of both, in src/easy.lisp.
 ;;;;
 ;;;; Note what is *not* here: curl_easy_setopt and curl_easy_getinfo are
 ;;;; variadic and cannot be declared with DEFCFUN at all.  They are reached

@@ -10,6 +10,8 @@ cffi-libffi, ghcr.io/ocicl/cffi@sha256:5233d1704f5e84297dbd776e5e45aa409ccc155a2
 cffi-tests, ghcr.io/ocicl/cffi@sha256:5233d1704f5e84297dbd776e5e45aa409ccc155a29baa51c1b912e69e983d4c0, cffi-20260716-7910d7e/cffi-tests.asd
 cffi-toolchain, ghcr.io/ocicl/cffi@sha256:5233d1704f5e84297dbd776e5e45aa409ccc155a29baa51c1b912e69e983d4c0, cffi-20260716-7910d7e/cffi-toolchain.asd
 cffi-uffi-compat, ghcr.io/ocicl/cffi@sha256:5233d1704f5e84297dbd776e5e45aa409ccc155a29baa51c1b912e69e983d4c0, cffi-20260716-7910d7e/cffi-uffi-compat.asd
+cl-ppcre, ghcr.io/ocicl/cl-ppcre@sha256:bf073924cf4fd5957a4fd961a95d446ed0e53fa32a5002cbd2d52182874f45e5, cl-ppcre-20250606-a2ea581/cl-ppcre.asd
+cl-ppcre-unicode, ghcr.io/ocicl/cl-ppcre@sha256:bf073924cf4fd5957a4fd961a95d446ed0e53fa32a5002cbd2d52182874f45e5, cl-ppcre-20250606-a2ea581/cl-ppcre-unicode.asd
 fiveam, ghcr.io/ocicl/fiveam@sha256:e283043dc8d31e8df2b214465cf5a06ea07bdbea10e600a40e17aaf9518226ac, fiveam-20240928-e43d6c8/fiveam.asd
 global-vars, ghcr.io/ocicl/global-vars@sha256:d197e871c9c9abc4bf31b1186f5fd28f0ca848ebe2e9dddf2d82ecee01dbdc65, global-vars-20240503-c749f32/global-vars.asd
 global-vars-test, ghcr.io/ocicl/global-vars@sha256:d197e871c9c9abc4bf31b1186f5fd28f0ca848ebe2e9dddf2d82ecee01dbdc65, global-vars-20240503-c749f32/global-vars-test.asd

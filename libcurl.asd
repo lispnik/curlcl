@@ -46,7 +46,11 @@ generic CURLE_WRITE_ERROR."
                              (:file "library")    ; loading, version, features, global init
                              (:file "types")      ; ctypes, enums, structs
                              (:file "varargs")    ; the libffi variadic call layer
-                             (:file "easy"))))
+                             (:file "easy-raw")   ; raw bindings + option introspection
+                             (:file "options")
+                             (:file "options-table") ; generated
+                             (:file "infos")
+                             (:file "infos-table")))) ; generated
   :in-order-to ((test-op (test-op #:libcurl/test))))
 
 (asdf:defsystem #:libcurl/generator
@@ -60,7 +64,10 @@ generic CURLE_WRITE_ERROR."
   :source-control (:git "https://github.com/lispnik/libcurl.git")
   :bug-tracker "https://github.com/lispnik/libcurl/issues"
   :serial t
-  :depends-on (#:libcurl #:alexandria)
+  ;; Deliberately does NOT depend on #:libcurl: it is a text-processing tool
+  ;; that writes two of that system's source files, so requiring the system it
+  ;; generates for would be circular the first time it is run.
+  :depends-on (#:cl-ppcre #:alexandria)
   :components ((:module "generator"
                 :serial t
                 :components ((:file "generate-tables")))))
@@ -82,7 +89,8 @@ generic CURLE_WRITE_ERROR."
                 :components ((:file "package")
                              (:file "library-tests")
                              (:file "types-tests")
-                             (:file "varargs-tests"))))
+                             (:file "varargs-tests")
+                             (:file "tables-tests"))))
   ;; ASDF ignores whatever a TEST-OP perform method returns, so reporting
   ;; failure by returning NIL would leave `asdf:test-system' -- and therefore
   ;; CI -- green on a suite that failed.  Signal.

@@ -7,7 +7,7 @@
   (:export #:run-tests
            #:all-tests
            ;; Suites.
-           #:library #:types #:varargs))
+           #:library #:types #:varargs #:tables))
 
 (in-package #:libcurl/test)
 
@@ -24,6 +24,10 @@
 
 (def-suite varargs
   :description "The libffi variadic call layer for setopt and getinfo."
+  :in all-tests)
+
+(def-suite tables
+  :description "The generated option and info tables, against the loaded library."
   :in all-tests)
 
 (defun run-tests ()
