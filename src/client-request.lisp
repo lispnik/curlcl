@@ -245,6 +245,7 @@ accumulated, which is what makes a large download not have to fit in memory."
                                           basic-auth bearer-auth
                                           cookie-jar cookies
                                           proxy verify-ssl ca-file verbose
+                                          fail-on-error
                                           http-version range referer
                                           output on-data on-header on-progress)
   "Apply every request option to HANDLE.
@@ -287,6 +288,11 @@ transfer: it closes a file opened for :INPUT, which nothing else owns."
   (when referer (setopt handle :referer referer))
   (when range (setopt handle :range range))
   (when verbose (setopt handle :verbose t))
+  ;; CURLOPT_FAILONERROR makes libcurl abort as soon as it sees a >= 400 status
+  ;; and deliver no body at all.  Checking the status afterwards is not the
+  ;; same thing: by then the body has already been written to :OUTPUT, which is
+  ;; exactly what `curl --fail' promises not to do.
+  (when fail-on-error (setopt handle :failonerror t))
   (when proxy (setopt handle :proxy proxy))
   (when ca-file (setopt handle :cainfo (uiop:native-namestring ca-file)))
   (when http-version
@@ -343,6 +349,7 @@ transfer: it closes a file opened for :INPUT, which nothing else owns."
                      (follow-redirects t) max-redirects
                      user-agent accept-encoding basic-auth bearer-auth
                      cookie-jar cookies proxy verify-ssl ca-file verbose
+                     fail-on-error
                      http-version range referer
                      output on-data on-header on-progress on-retry
                      force-binary force-string
@@ -369,6 +376,8 @@ Only transport failures signal.
   :ON-PROGRESS  a function called with (dltotal dlnow ultotal ulnow)
   :RETRY        an attempt count, a plist, or a RETRY-POLICY
   :SESSION      a SESSION whose connections and cookies to reuse
+  :FAIL-ON-ERROR  abort on a >= 400 status and deliver no body, signalling
+                :HTTP-RETURNED-ERROR -- curl's --fail
   :VERIFY-SSL   :NONE disables certificate checking; do not
 
 Streaming is via :OUTPUT or :ON-DATA.  There is no lazy body stream, because
@@ -379,7 +388,7 @@ buffer."
                       follow-redirects max-redirects user-agent accept-encoding
                       basic-auth bearer-auth cookie-jar cookies proxy verify-ssl
                       ca-file verbose http-version range referer output on-data
-                      on-header on-progress input input-size))
+                      on-header on-progress input input-size fail-on-error))
   (let ((policy (make-retry retry))
         (configure (loop for (key value) on options by #'cddr
                          unless (member key '(:retry :session :force-binary

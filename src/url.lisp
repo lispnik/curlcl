@@ -73,15 +73,39 @@
            :url url))
   code)
 
+(defun %set-url-part (url part content flags)
+  "Set a component of URL.  The one place that actually calls curl_url_set.
+
+Both MAKE-URL and (SETF URL-PART) go through here rather than one calling the
+other: a SETF value form carries only its primary value, so flags routed
+through SETF are silently dropped -- which is exactly what MAKE-URL used to do
+with its own, leaving :ALLOW-SPACE and friends quietly inert."
+  (check-type part symbol)
+  (if (null content)
+      (%check-url (%curl-url-set (url-pointer url)
+                                 (curlcode-value part 'curl-upart)
+                                 (cffi:null-pointer)
+                                 (url-flags-value flags)))
+      (cffi:with-foreign-string (c-string (string content))
+        (%check-url (%curl-url-set (url-pointer url)
+                                   (curlcode-value part 'curl-upart)
+                                   c-string
+                                   (url-flags-value flags))
+                    :url (string content))))
+  content)
+
 (defun make-url (&optional string &rest flags)
-  "Parse STRING, or make an empty URL when it is omitted."
+  "Parse STRING, or make an empty URL when it is omitted.
+
+FLAGS are keywords from *URL-FLAGS*, applied to the parse -- :ALLOW-SPACE and
+:NO-AUTHORITY being the ones that decide whether input parses at all."
   (let ((pointer (%curl-url)))
     (when (cffi:null-pointer-p pointer)
       (error 'url-error :message "curl_url returned NULL"))
     (let ((url (make-instance 'url :pointer pointer))
           (completed nil))
       (unwind-protect
-           (progn (when string (setf (url-part url :url) (values string flags)))
+           (progn (when string (%set-url-part url :url string flags))
                   (setf completed t)
                   url)
         (unless completed (close-url url))))))
@@ -93,9 +117,13 @@
     (%curl-url-cleanup (url-pointer url)))
   (values))
 
-(defmacro with-url ((var &optional string) &body body)
-  "Run BODY with VAR bound to a parsed URL, released on exit."
-  `(let ((,var (make-url ,@(when string (list string)))))
+(defmacro with-url ((var &optional string &rest flags) &body body)
+  "Run BODY with VAR bound to a parsed URL, released on exit.
+
+FLAGS are passed to MAKE-URL, so the parse can be relaxed the same way:
+
+  (with-url (u \"http://example.com/a b\" :allow-space) ...)"
+  `(let ((,var (make-url ,@(when string (list* string flags)))))
      (unwind-protect (progn ,@body)
        (close-url ,var))))
 
@@ -136,26 +164,7 @@ usefully :URLDECODE."
 
 (defun (setf url-part) (value url part &rest flags)
   "Set a component of URL.  A NIL value removes it."
-  (check-type part symbol)
-  ;; MAKE-URL passes (values string flags) through here, so a list value for
-  ;; the whole-URL case carries its own flags.
-  (multiple-value-bind (content extra-flags)
-      (if (and (consp value) (eq part :url))
-          (values (first value) (rest value))
-          (values value nil))
-    (let ((all-flags (append (alexandria:ensure-list flags)
-                             (alexandria:ensure-list extra-flags))))
-      (if (null content)
-          (%check-url (%curl-url-set (url-pointer url)
-                                     (curlcode-value part 'curl-upart)
-                                     (cffi:null-pointer)
-                                     (url-flags-value all-flags)))
-          (cffi:with-foreign-string (c-string (string content))
-            (%check-url (%curl-url-set (url-pointer url)
-                                       (curlcode-value part 'curl-upart)
-                                       c-string
-                                       (url-flags-value all-flags))
-                        :url (string content))))))
+  (%set-url-part url part value flags)
   value)
 
 (defun url-string (url &rest flags)
@@ -168,7 +177,7 @@ usefully :URLDECODE."
 Convenience over WITH-URL for the common case of wanting the pieces rather
 than a handle to keep."
   (with-url (url)
-    (setf (url-part url :url) (cons string flags))
+    (%set-url-part url :url string flags)
     (loop for part in '(:scheme :user :password :options :host :port :path
                         :query :fragment :zoneid)
           for value = (url-part url part)

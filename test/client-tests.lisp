@@ -731,3 +731,53 @@ reporting progress" (- latest earliest))))))
     (let ((response (http-put (test-url "/redirect/1") :input path
                               :follow-redirects t)))
       (is (= 200 (response-status response))))))
+
+(test fail-on-error-delivers-no-body
+  ;; curl --fail promises "no output at all" on a server error.  Checking the
+  ;; status after the fact cannot deliver that: the body has already gone to
+  ;; :OUTPUT by then.  CURLOPT_FAILONERROR aborts before any of it arrives.
+  (let ((written (make-array 0 :element-type '(unsigned-byte 8)
+                               :adjustable t :fill-pointer t)))
+    (handler-case
+        (progn (http-get (test-url "/status/404")
+                         :fail-on-error t
+                         :on-data (lambda (octets)
+                                    (loop for byte across octets
+                                          do (vector-push-extend byte written))))
+               (fail "expected --fail to signal"))
+      (easy-error (c)
+        (is (eq :http-returned-error (curl-error-code-name c)))
+        (is (zerop (length written))
+            "~D bytes of the error body were delivered" (length written))))))
+
+(test fail-on-error-is-off-by-default
+  ;; The client's own position: a non-2xx is a response, not a condition.
+  (let ((response (http-get (test-url "/status/404"))))
+    (is (= 404 (response-status response)))
+    (is (string= "status 404" (response-body response)))))
+
+(test jitter-is-drawn-from-a-private-random-state
+  ;; The global *RANDOM-STATE* is not guaranteed safe against concurrent use on
+  ;; SBCL, and the failure mode is the one jitter exists to prevent: threads
+  ;; backing off in lockstep.
+  (let* ((policy (make-retry '(:initial-delay 1.0 :multiplier 1.0 :jitter 0.5)))
+         (results (make-array 8 :initial-element nil))
+         (threads (loop for i below 8
+                        collect (let ((index i))
+                                  (bt:make-thread
+                                   (lambda ()
+                                     (setf (aref results index)
+                                           (handler-case
+                                               (loop repeat 50
+                                                     collect (libcurl::retry-delay
+                                                              policy 1))
+                                             (error (c) c))))
+                                   :name "jitter")))))
+    (mapc #'bt:join-thread threads)
+    (let ((all (loop for i below 8 append (aref results i))))
+      (is (every #'numberp all) "a thread failed drawing jitter")
+      (is (every (lambda (d) (<= 0 d 1.5)) all))
+      ;; 400 draws should be overwhelmingly distinct.
+      (is (< 350 (length (remove-duplicates all :test #'=)))
+          "only ~D distinct delays from 400 draws"
+          (length (remove-duplicates all :test #'=))))))

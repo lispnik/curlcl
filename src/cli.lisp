@@ -36,15 +36,23 @@
                                   :buffering :full)
   #-sbcl (error "No binary standard input on this implementation."))
 
+(defvar *binary-stdout* nil)
+
 (defun binary-stdout ()
-  "A byte stream on file descriptor 1.
+  "The byte stream on file descriptor 1.
 
 Response bodies are octets and may be anything at all, so they go to the file
 descriptor rather than through *STANDARD-OUTPUT*, which would try to encode
-them."
-  #+sbcl (sb-sys:make-fd-stream 1 :output t :element-type '(unsigned-byte 8)
-                                  :buffering :full)
-  #-sbcl (error "No binary standard output on this implementation."))
+them.
+
+Memoised: several buffered streams on one descriptor interleave their flushes,
+which under --parallel would shuffle the bodies together."
+  (or *binary-stdout*
+      (setf *binary-stdout*
+            #+sbcl (sb-sys:make-fd-stream 1 :output t
+                                            :element-type '(unsigned-byte 8)
+                                            :buffering :full)
+            #-sbcl (error "No binary standard output on this implementation."))))
 
 (defun message (control &rest arguments)
   "Write a diagnostic to standard error, as curl does."
@@ -198,7 +206,11 @@ Accepts curl's forms: name=value, name=@path, and a ;type= suffix on either."
     (append
      (list :method method
            :follow-redirects (and (clingon:getopt command :location) t)
-           :verbose (and (clingon:getopt command :verbose) t))
+           :verbose (and (clingon:getopt command :verbose) t)
+           ;; Delegated to libcurl rather than checked afterwards: by the time
+           ;; a status is in hand the body has already gone to the output, and
+           ;; --fail promises no output at all.
+           :fail-on-error (and (clingon:getopt command :fail) t))
      (when (clingon:getopt command :header)
        (list :headers (clingon:getopt command :header)))
      ;; -G moves the data into the query string instead of the body.
@@ -264,20 +276,17 @@ Accepts curl's forms: name=value, name=@path, and a ;type= suffix on either."
       2))
 
 (defun report-response (command response)
-  "Do the after-the-fact parts: --fail, --write-out.  Returns an exit code."
-  (let ((status (libcurl:response-status response)))
-    (cond
-      ((and (clingon:getopt command :fail) (<= 400 status))
-       (unless (clingon:getopt command :silent)
-         (message "The requested URL returned error: ~D" status))
-       ;; CURLE_HTTP_RETURNED_ERROR, which is what curl --fail exits with.
-       22)
-      (t
-       (let ((format (clingon:getopt command :write-out)))
-         (when format
-           (write-string (expand-write-out format response) *standard-output*)
-           (finish-output *standard-output*)))
-       0))))
+  "Do the after-the-fact part: --write-out.  Returns an exit code.
+
+--fail is not handled here.  It is CURLOPT_FAILONERROR, so a failing status
+never produces a RESPONSE at all -- it arrives as a condition carrying
+CURLE_HTTP_RETURNED_ERROR, and EXIT-CODE-FOR turns that into curl's 22."
+  (declare (ignorable command))
+  (let ((format (clingon:getopt command :write-out)))
+    (when format
+      (write-string (expand-write-out format response) *standard-output*)
+      (finish-output *standard-output*)))
+  0)
 
 (defmacro with-output ((stream command url index) &body body)
   "Bind STREAM to where this URL's body should go, closing it if it is a file."
@@ -361,7 +370,7 @@ Accepts curl's forms: name=value, name=@path, and a ;type= suffix on either."
                                                         :if-exists :supersede
                                                         :if-does-not-exist :create)
                                                   (binary-stdout))))
-                                 (push stream streams)
+                                 (push (cons stream (and destination t)) streams)
                                  (list* url :output stream
                                         :on-header (header-writer command stream)
                                         (request-options command))))))
@@ -378,7 +387,12 @@ Accepts curl's forms: name=value, name=@path, and a ;type= suffix on either."
                                       (exit-code-for outcome)))))
                       (when (plusp code) (setf worst code))))
            worst)
-      (dolist (stream streams) (ignore-errors (finish-output stream))))))
+      ;; Flush everything, then close the files this opened.  A stream on
+      ;; standard output is not ours to close, so it is only flushed.
+      (dolist (entry streams)
+        (destructuring-bind (stream . ours) entry
+          (ignore-errors (finish-output stream))
+          (when ours (ignore-errors (close stream))))))))
 
 ;;; The command ---------------------------------------------------------------
 

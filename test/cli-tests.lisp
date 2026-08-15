@@ -240,3 +240,41 @@
       (declare (ignore error-output))
       (is (= 0 code))
       (is (search "body=piped-in" output)))))
+
+(test the-driver-writes-nothing-when-fail-is-given
+  ;; `curl --fail' outputs nothing at all on a server error, which is only
+  ;; achievable by aborting before the body arrives.
+  (with-curlcl-or-skip
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" "-f" (test-url "/status/404")))
+      (is (= 22 code))
+      (is (string= "" output)
+          "--fail wrote ~D bytes of the error body" (length output)))))
+
+(test the-driver-writes-the-error-body-without-fail
+  (with-curlcl-or-skip
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" (test-url "/status/404")))
+      (is (= 0 code))
+      (is (string= "status 404" output)))))
+
+(test parallel-output-files-are-complete-and-closed
+  (with-curlcl-or-skip
+    (uiop:with-temporary-file (:pathname a)
+      (uiop:with-temporary-file (:pathname b)
+        (multiple-value-bind (output code)
+            (run-program-capturing
+             (native-namestring-of *curlcl-binary*)
+             (list "-s" "-Z"
+                   "-o" (uiop:native-namestring a)
+                   "-o" (uiop:native-namestring b)
+                   (test-url "/large?bytes=40000")
+                   (test-url "/large?bytes=40000")))
+          (declare (ignore output))
+          (is (= 0 code))
+          (with-open-file (in a :element-type '(unsigned-byte 8))
+            (is (= 40000 (file-length in))))
+          (with-open-file (in b :element-type '(unsigned-byte 8))
+            (is (= 40000 (file-length in)))))))))

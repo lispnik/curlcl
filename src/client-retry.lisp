@@ -47,6 +47,21 @@ usually transient.  501 and 505 are excluded because they will not change.")
 POST and PATCH are excluded: only the caller knows whether repeating one
 duplicates an effect.  :RETRY-NON-IDEMPOTENT overrides this.")
 
+(defvar *jitter-random-state* (make-random-state t)
+  "A random state of its own, for backoff jitter.
+
+SBCL does not guarantee the global *RANDOM-STATE* is safe against concurrent
+use, and the failure mode is precisely the one jitter exists to prevent:
+several threads backing off together would draw correlated delays and retry in
+lockstep.")
+
+(defvar *jitter-lock* (bt:make-lock "libcurl retry jitter"))
+
+(defun jitter-factor ()
+  "A value in [-1, 1), drawn under a lock from a private random state."
+  (bt:with-lock-held (*jitter-lock*)
+    (- (random 2.0d0 *jitter-random-state*) 1.0d0)))
+
 (defstruct (retry-policy (:conc-name retry-))
   "How and whether to retry a failed request."
   (max-attempts 1 :type (integer 1))
@@ -92,7 +107,7 @@ that one is an instruction, not an estimate."
              (jitter (retry-jitter policy)))
         (if (plusp jitter)
             ;; Full-width jitter around the base delay, floored at zero.
-            (max 0d0 (+ base (* base jitter (- (random 2.0d0) 1.0d0))))
+            (max 0d0 (+ base (* base jitter (jitter-factor))))
             base))))
 
 (defun retryable-condition-p (policy condition)

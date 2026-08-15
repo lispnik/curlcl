@@ -98,3 +98,20 @@
   ;; behaviour than they asked for, with nothing to see.
   (with-url (u "http://example.com/")
     (signals curl-error (url-part u :host :no-such-flag))))
+
+(test make-url-honours-its-flags
+  ;; MAKE-URL routed its &rest flags through SETF, and a SETF value form
+  ;; carries only its primary value -- so every flag was silently discarded and
+  ;; :ALLOW-SPACE and friends were inert.  A space in the path parses only with
+  ;; the flag, so this fails loudly if they are dropped again.
+  (with-url (u "http://example.com/a b" :allow-space)
+    (is (string= "http://example.com/a b" (url-string u))))
+  (signals url-error (make-url "http://example.com/a b"))
+  ;; The same flags reach PARSE-URL, which took a different path to them.
+  (is (string= "/a b" (getf (parse-url "http://example.com/a b" :allow-space)
+                            :path))))
+
+(test setf-url-part-still-takes-flags
+  (with-url (u "http://example.com/?a=1")
+    (setf (url-part u :query :append-query) "b=2")
+    (is (string= "a=1&b=2" (url-part u :query)))))
