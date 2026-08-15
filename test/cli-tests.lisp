@@ -212,3 +212,31 @@
                                              (list "-s" (test-url "/large?bytes=5000")))))
           (is (string= ours theirs)))
         (skip "curl is not installed"))))
+
+(test the-driver-streams-an-upload-from-a-file
+  (with-curlcl-or-skip
+    (uiop:with-temporary-file (:pathname path :stream out :direction :output
+                               :element-type '(unsigned-byte 8))
+      (write-sequence (libcurl::coerce-to-octets "uploaded-by-curlcl") out)
+      (finish-output out)
+      :close-stream
+      (multiple-value-bind (output code)
+          (run-program-capturing (native-namestring-of *curlcl-binary*)
+                                 (list "-s" "-T" (uiop:native-namestring path)
+                                       (test-url "/echo")))
+        (is (= 0 code))
+        (is (search "method=PUT" output))
+        (is (search "body=uploaded-by-curlcl" output))))))
+
+(test the-driver-uploads-from-standard-input
+  ;; `-T -' is why the upload has to stream: stdin has no length to buffer by.
+  (with-curlcl-or-skip
+    (multiple-value-bind (output error-output code)
+        (uiop:run-program (list (native-namestring-of *curlcl-binary*)
+                                "-s" "-T" "-" (test-url "/echo"))
+                          :input (make-string-input-stream "piped-in")
+                          :output :string :error-output :string
+                          :ignore-error-status t)
+      (declare (ignore error-output))
+      (is (= 0 code))
+      (is (search "body=piped-in" output)))))

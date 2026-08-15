@@ -16,9 +16,8 @@
 ;;;;   one by default; here the default is quiet, which is what almost every
 ;;;;   scripted use wants and what -s would otherwise be needed for.
 ;;;;
-;;;;   --upload-file reads the file into memory rather than streaming it.  The
-;;;;   library supports streaming uploads through a read callback; the CLI does
-;;;;   not yet wire it up.
+;;;;   --write-out understands the variables listed in WRITE-OUT-VALUE rather
+;;;;   than curl's full set.
 
 (defpackage #:libcurl/cli
   (:use #:cl)
@@ -30,6 +29,12 @@
 (defparameter *program-version* "0.1.0")
 
 ;;; Output --------------------------------------------------------------------
+
+(defun binary-stdin ()
+  "A byte stream on file descriptor 0, for `-T -'."
+  #+sbcl (sb-sys:make-fd-stream 0 :input t :element-type '(unsigned-byte 8)
+                                  :buffering :full)
+  #-sbcl (error "No binary standard input on this implementation."))
 
 (defun binary-stdout ()
   "A byte stream on file descriptor 1.
@@ -200,12 +205,10 @@ Accepts curl's forms: name=value, name=@path, and a ;type= suffix on either."
      (when (and data (not get-style))
        (list :content data))
      (when forms (list :multipart forms))
+     ;; Streamed, not buffered: -T on a large file must not need it in memory,
+     ;; and "-" means standard input, which has no length to buffer by.
      (when upload
-       (list :content (with-open-file (in upload :element-type '(unsigned-byte 8))
-                        (let ((octets (make-array (file-length in)
-                                                  :element-type '(unsigned-byte 8))))
-                          (read-sequence octets in)
-                          octets))))
+       (list :input (if (string= upload "-") (binary-stdin) upload)))
      (when (clingon:getopt command :max-redirs)
        (list :max-redirects (clingon:getopt command :max-redirs)))
      (when (clingon:getopt command :max-time)
@@ -426,7 +429,7 @@ Accepts curl's forms: name=value, name=@path, and a ;type= suffix on either."
                         :description "write output to a file named as the remote file"
                         :key :remote-name)
    (clingon:make-option :string :short-name #\T :long-name "upload-file"
-                        :description "transfer local FILE to destination"
+                        :description "transfer local FILE to destination (- for stdin)"
                         :key :upload-file)
    (clingon:make-option :string :short-name #\u :long-name "user"
                         :description "server user and password" :key :user)
@@ -529,9 +532,8 @@ Accepts curl's forms: name=value, name=@path, and a ;type= suffix on either."
    (format nil "A curl-compatible client built on the libcurl Common Lisp ~
 binding.  Option names, defaults and exit codes follow curl(1), so most curl ~
 command lines work unchanged; exit codes are libcurl's own CURLcode values.~%~%~
-Two deliberate differences: there is no progress meter unless --progress-bar ~
-is given, and --upload-file reads the file into memory rather than streaming ~
-it.")
+One deliberate difference: there is no progress meter unless --progress-bar ~
+is given.")
    :authors '("Matthew Kennedy <burnsidemk@gmail.com>")
    :license "MIT"
    :version *program-version*

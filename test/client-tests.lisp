@@ -631,3 +631,103 @@ reporting progress" (- latest earliest))))))
       (is (= 200 (response-status (second results))))
       ;; The handles came back to the pool still attached to the share.
       (is (plusp (length (libcurl::session-pool session)))))))
+
+;;; Streaming uploads ---------------------------------------------------------
+
+(test input-streams-a-file-without-buffering-it
+  (uiop:with-temporary-file (:pathname path :stream out :direction :output
+                             :element-type '(unsigned-byte 8))
+    (dotimes (i 1000) (write-sequence (libcurl::coerce-to-octets "0123456789") out))
+    (finish-output out)
+    :close-stream
+    (let ((response (http-put (test-url "/echo") :input path)))
+      (is (= 200 (response-status response)))
+      (is (search "method=PUT" (response-body response)))
+      ;; All ten thousand bytes arrived, and the server saw a Content-Length
+      ;; rather than a chunked body, because a file's size is knowable.
+      (is (= 10000 (response-size-upload response)))
+      (is (search "content-length: 10000"
+                  (string-downcase (response-body response)))))))
+
+(test a-short-read-does-not-pad-the-body-with-nuls
+  ;; The bug this replaced: sizing a buffer from FILE-LENGTH and ignoring what
+  ;; READ-SEQUENCE actually filled uploaded the untouched tail as NUL bytes.
+  ;; A reader that reports its own count cannot do that.
+  (uiop:with-temporary-file (:pathname path :stream out :direction :output
+                             :element-type '(unsigned-byte 8))
+    (write-sequence (libcurl::coerce-to-octets "exactly-this") out)
+    (finish-output out)
+    :close-stream
+    (let ((response (http-put (test-url "/echo") :input path)))
+      (is (search "body=exactly-this" (response-body response)))
+      (is (not (find (code-char 0) (response-body response)))
+          "the uploaded body was padded with NUL bytes")
+      (is (= 12 (response-size-upload response))))))
+
+(test input-accepts-a-reader-function
+  ;; Size unknown, so the body goes out chunked -- which the fixture now
+  ;; understands, because that is what streaming from a pipe produces.
+  (let* ((remaining (libcurl::coerce-to-octets "from-a-function"))
+         (response (http-put (test-url "/echo")
+                             :input (lambda (capacity)
+                                      (if (zerop (length remaining))
+                                          :eof
+                                          (let ((piece (subseq remaining 0
+                                                               (min capacity
+                                                                    (length remaining)))))
+                                            (setf remaining
+                                                  (subseq remaining (length piece)))
+                                            piece))))))
+    (is (= 200 (response-status response)))
+    (is (search "body=from-a-function" (response-body response)))
+    (is (search "transfer-encoding: chunked"
+                (string-downcase (response-body response)))
+        "an upload of unknown size should be chunked")))
+
+(test input-accepts-a-stream-and-leaves-it-open
+  ;; A caller-supplied stream is the caller's to close; only a file this layer
+  ;; opened for itself gets closed.
+  (uiop:with-temporary-file (:pathname path :stream out :direction :output
+                             :element-type '(unsigned-byte 8))
+    (write-sequence (libcurl::coerce-to-octets "from-a-stream") out)
+    (finish-output out)
+    :close-stream
+    (with-open-file (in path :element-type '(unsigned-byte 8))
+      (let ((response (http-put (test-url "/echo") :input in)))
+        (is (search "body=from-a-stream" (response-body response)))
+        (is (open-stream-p in) "the caller's stream was closed")))))
+
+(test an-explicit-input-size-is-honoured
+  (let* ((remaining (libcurl::coerce-to-octets "sized"))
+         (response (http-put (test-url "/echo")
+                             :input-size 5
+                             :input (lambda (capacity)
+                                      (declare (ignore capacity))
+                                      (if (zerop (length remaining))
+                                          :eof
+                                          (prog1 remaining (setf remaining #())))))))
+    (is (search "content-length: 5" (string-downcase (response-body response))))))
+
+(test input-can-be-posted-rather-than-put
+  ;; CURLOPT_UPLOAD selects PUT; the method has to be overridden without
+  ;; cancelling the streaming body.
+  (uiop:with-temporary-file (:pathname path :stream out :direction :output
+                             :element-type '(unsigned-byte 8))
+    (write-sequence (libcurl::coerce-to-octets "posted-stream") out)
+    (finish-output out)
+    :close-stream
+    (let ((response (http-post (test-url "/echo") :input path)))
+      (is (search "method=POST" (response-body response)))
+      (is (search "body=posted-stream" (response-body response))))))
+
+(test a-streamed-upload-survives-a-redirect
+  ;; libcurl rewinds the body to repeat the request, which it can only do
+  ;; through the seek callback.
+  (uiop:with-temporary-file (:pathname path :stream out :direction :output
+                             :element-type '(unsigned-byte 8))
+    (write-sequence (libcurl::coerce-to-octets "rewound") out)
+    (finish-output out)
+    :close-stream
+    (let ((response (http-put (test-url "/redirect/1") :input path
+                              :follow-redirects t)))
+      (is (= 200 (response-status response))))))

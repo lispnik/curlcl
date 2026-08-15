@@ -232,6 +232,8 @@
    #:http-head
    #:http-options
    #:download
+   #:stream-reader
+   #:stream-seeker
    #:request-many
 
    ;; Responses.

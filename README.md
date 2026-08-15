@@ -103,14 +103,23 @@ be right for `Set-Cookie`:
 
 ### Streaming
 
-Nothing is buffered when you give it somewhere to go:
+Nothing is buffered when you give it somewhere to go — in either direction:
 
 ```lisp
 (curl:download "https://example.com/big.iso" #p"/tmp/big.iso")
 
 (curl:http-get "https://example.com/big.iso"
                :on-data (lambda (octets) (process octets)))
+
+;; :INPUT is the request-side counterpart of :OUTPUT.  A pathname, a stream,
+;; or a reader function; the source never has to fit in memory.
+(curl:http-put "https://example.com/big.iso" :input #p"/tmp/big.iso")
 ```
+
+A size is declared when it can be known, so the request carries a
+Content-Length; when it cannot — a pipe, a generator — the body goes out
+chunked. A file also gets a seek callback, so libcurl can rewind it to repeat
+the request for a redirect or an authentication challenge.
 
 ### Sessions
 
@@ -201,7 +210,7 @@ real client needs rather than what is convenient to expose. `-Z` goes through
 `curl_mime_*`, `-w` through `getinfo`.
 
 Two deliberate differences, both in `--help`: there is no progress meter unless
-`--progress-bar` is given, and `--upload-file` reads the file into memory
+`--progress-bar` is given, and `--upload-file` reads the file into memorycB
 rather than streaming it.
 
 `curlcl -V` also reports **which** libcurl it loaded, which curl has no need to

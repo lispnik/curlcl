@@ -64,17 +64,41 @@
 (defun request-header (headers name)
   (cdr (assoc name headers :test #'string-equal)))
 
+(defun read-chunked-body (stream)
+  "Read a chunked request body.
+
+Needed because an upload of unknown size -- which is what streaming from a pipe
+produces -- goes out chunked, and a fixture that only understood Content-Length
+would hang waiting for a body it had already been sent."
+  (let ((body (make-array 0 :element-type '(unsigned-byte 8)
+                            :adjustable t :fill-pointer t)))
+    (loop for size-line = (read-line-ascii stream)
+          for size = (when (and size-line (plusp (length size-line)))
+                       (parse-integer size-line :radix 16 :junk-allowed t))
+          while (and size (plusp size))
+          do (let ((chunk (make-array size :element-type '(unsigned-byte 8))))
+               (read-sequence chunk stream)
+               (loop for byte across chunk do (vector-push-extend byte body))
+               ;; The CRLF that terminates the chunk.
+               (read-line-ascii stream))
+          finally (when size (read-line-ascii stream)))
+    (coerce body '(vector (unsigned-byte 8)))))
+
 (defun read-request (stream)
   (let ((line (read-line-ascii stream)))
     (when (and line (plusp (length line)))
       (let* ((parts (uiop:split-string line :separator " "))
              (headers (parse-headers stream))
              (length (request-header headers "content-length"))
-             (body (when length
-                     (let ((octets (make-array (parse-integer length)
-                                               :element-type '(unsigned-byte 8))))
-                       (read-sequence octets stream)
-                       octets))))
+             (encoding (request-header headers "transfer-encoding"))
+             (body (cond
+                     ((and encoding (search "chunked" (string-downcase encoding)))
+                      (read-chunked-body stream))
+                     (length
+                      (let ((octets (make-array (parse-integer length)
+                                                :element-type '(unsigned-byte 8))))
+                        (read-sequence octets stream)
+                        octets)))))
         (make-request :method (first parts) :path (second parts)
                       :version (third parts) :headers headers :body body)))))
 

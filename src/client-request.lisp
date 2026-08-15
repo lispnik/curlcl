@@ -80,25 +80,33 @@ what libcurl would do elsewhere."
                                                      value)))
                              out)))))
 
-(defun apply-method (handle method)
+(defun apply-method (handle method &optional uploading)
   "Set the request method, using the option libcurl prefers for each.
 
 CURLOPT_CUSTOMREQUEST changes the method string and nothing else, which is
 right for DELETE and PATCH but wrong for HEAD: libcurl would go on expecting a
 body that is never coming and wait for it.  HEAD therefore goes through
 CURLOPT_NOBODY, and GET and POST through the options that also set up the rest
-of their behaviour.  Any other method is passed through verbatim."
+of their behaviour.  Any other method is passed through verbatim.
+
+UPLOADING says a streaming body has already been arranged, which selects PUT
+through CURLOPT_UPLOAD.  The method then has to be applied *without* undoing
+that: CURLOPT_HTTPGET and CURLOPT_POST would each cancel the upload, so the
+method string is set with CURLOPT_CUSTOMREQUEST instead and the streaming body
+survives."
   (case method
-    (:get (setopt handle :httpget t))
+    (:get (if uploading nil (setopt handle :httpget t)))
     (:head (setopt handle :nobody t))
-    (:post (setopt handle :post t))
+    (:post (if uploading
+               (setopt handle :customrequest "POST")
+               (setopt handle :post t)))
     (t (unless (or (stringp method) (symbolp method))
          (error 'curl-error
                 :message (format nil "Cannot use ~S as an HTTP method." method)))
        (setopt handle :customrequest (string-upcase (string method)))))
   method)
 
-(defun apply-content (handle content multipart method)
+(defun apply-content (handle content multipart method uploading)
   "Attach a request body.  Returns the Content-Type it implies, or NIL.
 
 CONTENT may be a string or octets (sent as-is), or an alist (form-encoded).
@@ -107,11 +115,16 @@ MULTIPART is a list of part plists and goes through curl_mime.
 A POST with no body still needs one declared.  CURLOPT_POST tells libcurl to
 expect a request body, and with no size and no read callback it goes looking
 for one -- historically on stdin.  An explicit empty body makes it send
-Content-Length: 0 and move on."
+Content-Length: 0 and move on.
+
+Unless UPLOADING, that is: a streaming body is already arranged, and setting
+CURLOPT_POSTFIELDS -- even to the empty string -- replaces it, so the upload
+would silently become a zero-length one."
   (cond
     (multipart (set-mime-body handle multipart) nil)
     ((null content)
-     (when (eq method :post) (setopt handle :postfields ""))
+     (when (and (eq method :post) (not uploading))
+       (setopt handle :postfields ""))
      nil)
     ((or (stringp content) (typep content '(array (unsigned-byte 8) (*))))
      (setopt handle :postfields content)
@@ -121,6 +134,70 @@ Content-Length: 0 and move on."
      "application/x-www-form-urlencoded")
     (t (error 'curl-error
               :message (format nil "Cannot use ~S as a request body." content)))))
+
+(defun stream-reader (stream)
+  "A read callback that streams STREAM, honouring the actual count read.
+
+The count matters: sizing a buffer from FILE-LENGTH and ignoring what
+READ-SEQUENCE actually filled uploads the untouched tail as NUL bytes, which
+silently corrupts the body rather than failing."
+  (lambda (capacity)
+    (let* ((buffer (make-array capacity :element-type '(unsigned-byte 8)))
+           (count (read-sequence buffer stream)))
+      (if (zerop count) :eof (subseq buffer 0 count)))))
+
+(defun stream-seeker (stream)
+  "A seek callback for STREAM, or NIL when it cannot be repositioned.
+
+libcurl rewinds the body when it has to repeat a request -- following a
+redirect, or answering an authentication challenge -- and without a seek
+callback it can only fail.  A file can be rewound; a pipe cannot, and says so
+with :CANTSEEK rather than pretending."
+  (when (ignore-errors (file-position stream))
+    (lambda (offset whence)
+      (let ((target (case whence
+                      (:set offset)
+                      (:current (+ (or (file-position stream) 0) offset))
+                      (:end (+ (or (ignore-errors (file-length stream)) 0) offset))
+                      (t nil))))
+        (cond ((null target) :cantseek)
+              ((ignore-errors (file-position stream target)) :ok)
+              (t :fail))))))
+
+(defun apply-input (handle input input-size)
+  "Stream the request body from INPUT.  Returns a cleanup thunk.
+
+INPUT may be a pathname or namestring (opened here and closed by the cleanup),
+an input stream (used as-is and left to its owner), or a function taking a
+maximum byte count and returning octets, a string, or :EOF.
+
+The size is declared when it can be known, so libcurl sends Content-Length;
+without it the body goes out chunked, which not every server accepts.  Nothing
+is buffered either way, so the file never has to fit in memory."
+  (let (stream size close-p reader)
+    (etypecase input
+      (function (setf reader input size input-size))
+      ((or pathname string)
+       (setf stream (open input :element-type '(unsigned-byte 8))
+             close-p t
+             size (or input-size (ignore-errors (file-length stream)))
+             reader (stream-reader stream)))
+      (stream
+       (setf stream input
+             size (or input-size (ignore-errors (file-length stream)))
+             reader (stream-reader stream))))
+    ;; CURLOPT_UPLOAD selects PUT and tells libcurl to pull the body from the
+    ;; read callback rather than expecting one up front.
+    (setopt handle :upload t)
+    (when (and size (<= 0 size))
+      (setopt handle :infilesize-large size))
+    (setf (callback-function handle :read) reader)
+    (when stream
+      (let ((seeker (stream-seeker stream)))
+        (when seeker (setf (callback-function handle :seek) seeker))))
+    (if close-p
+        (lambda () (ignore-errors (close stream)))
+        (lambda ()))))
 
 (defun plist-value (plist key default)
   "Like GETF, but distinguishes an explicit NIL from an absent key.
@@ -161,6 +238,7 @@ accumulated, which is what makes a large download not have to fit in memory."
 ;; forwards just the options the caller actually supplied -- so a default
 ;; declared only there would never reach this function.
 (defun configure-request (handle url &key (method :get) headers content multipart
+                                          input input-size
                                           timeout connect-timeout
                                           (follow-redirects t) max-redirects
                                           user-agent (accept-encoding "")
@@ -169,10 +247,18 @@ accumulated, which is what makes a large download not have to fit in memory."
                                           proxy verify-ssl ca-file verbose
                                           http-version range referer
                                           output on-data on-header on-progress)
-  "Apply every request option to HANDLE.  Returns the body-collecting closure."
+  "Apply every request option to HANDLE.
+
+Returns (values body-closure cleanup-thunk).  The cleanup must run after the
+transfer: it closes a file opened for :INPUT, which nothing else owns."
   (setopt handle :url url)
-  (apply-method handle method)
-  (let ((implied-type (apply-content handle content multipart method))
+  ;; The upload is arranged before the method, because CURLOPT_UPLOAD selects
+  ;; PUT and APPLY-METHOD has to override the method string without cancelling
+  ;; the streaming body.
+  (let ((cleanup (if input (apply-input handle input input-size) (lambda ()))))
+   (apply-method handle method (and input t))
+   (let ((implied-type (apply-content handle content multipart method
+                                      (and input t)))
         (header-lines (normalise-headers headers)))
     ;; A Content-Type implied by the body is only added when the caller did not
     ;; set one; theirs wins.
@@ -249,10 +335,10 @@ accumulated, which is what makes a large download not have to fit in memory."
                                             (octets-to-string octets
                                                               :encoding :latin-1)))
             t)))
-  (make-body-sink handle output on-data))
+   (values (make-body-sink handle output on-data) cleanup)))
 
 (defun request (url &rest options
-                &key (method :get) headers content multipart
+                &key (method :get) headers content multipart input input-size
                      timeout connect-timeout
                      (follow-redirects t) max-redirects
                      user-agent accept-encoding basic-auth bearer-auth
@@ -272,6 +358,9 @@ A non-2xx status is *not* an error -- it is a response, and the caller decides.
 Only transport failures signal.
 
   :CONTENT      a string or octets sent as-is, or an alist form-encoded
+  :INPUT        a pathname, an input stream, or a reader function -- the body
+                is streamed from it rather than buffered, so the source never
+                has to fit in memory
   :MULTIPART    a list of part plists, sent through curl_mime
   :HEADERS      an alist, a plist, or a list of \"Name: value\" strings
   :OUTPUT       a stream to write the body to as it arrives
@@ -290,7 +379,7 @@ buffer."
                       follow-redirects max-redirects user-agent accept-encoding
                       basic-auth bearer-auth cookie-jar cookies proxy verify-ssl
                       ca-file verbose http-version range referer output on-data
-                      on-header on-progress))
+                      on-header on-progress input input-size))
   (let ((policy (make-retry retry))
         (configure (loop for (key value) on options by #'cddr
                          unless (member key '(:retry :session :force-binary
@@ -306,12 +395,18 @@ buffer."
 (defun %request-once (url configure &key method session force-binary force-string)
   "One attempt, with no retry logic.  Returns a RESPONSE."
   (flet ((run (handle)
-           (let ((body (apply #'configure-request handle url configure)))
-             (perform handle)
-             (make-response-from-handle handle (funcall body)
-                                        :request-method method
-                                        :force-binary force-binary
-                                        :force-string force-string))))
+           (multiple-value-bind (body cleanup)
+               (apply #'configure-request handle url configure)
+             (unwind-protect
+                  (progn
+                    (perform handle)
+                    (make-response-from-handle handle (funcall body)
+                                               :request-method method
+                                               :force-binary force-binary
+                                               :force-string force-string))
+               ;; Closes a file opened for :INPUT.  Runs after PERFORM, since
+               ;; libcurl reads from it right up until the transfer ends.
+               (funcall cleanup)))))
     (if session
         (with-session-handle (handle session) (run handle))
         (with-easy (handle) (run handle)))))
@@ -397,6 +492,10 @@ safe if the consumer can tolerate that."
                 (option-lists (make-array count :initial-element nil))
                 (policies (make-array count :initial-element nil))
                 (attempts (make-array count :initial-element 0))
+                ;; One per request, replaced on each attempt: a retry reopens
+                ;; the input, so the previous attempt's file has to be closed.
+                (cleanups (make-array count
+                                      :initial-element (lambda () nil)))
                 ;; (due-time . index) for requests waiting out a backoff.
                 (scheduled '())
                 ;; Requests with no final outcome yet.  Every one of them is
@@ -424,10 +523,13 @@ safe if the consumer can tolerate that."
                      ;; A fresh body sink per attempt.  Reusing the old one
                      ;; would prepend whatever the failed attempt managed to
                      ;; deliver to the successful response.
-                     (setf (aref bodies index)
-                           (apply #'configure-request handle (aref urls index)
-                                  (transfer-options (aref option-lists index)))
-                           (getf (handle-plist handle) :request-index) index)
+                     (funcall (aref cleanups index))
+                     (multiple-value-bind (body cleanup)
+                         (apply #'configure-request handle (aref urls index)
+                                (transfer-options (aref option-lists index)))
+                       (setf (aref bodies index) body
+                             (aref cleanups index) cleanup))
+                     (setf (getf (handle-plist handle) :request-index) index)
                      (incf (aref attempts index))
                      (add-transfer multi handle)))
                  (finish (index outcome)
@@ -517,6 +619,7 @@ safe if the consumer can tolerate that."
                      (coerce results 'list))
                 (loop for index below count
                       for handle = (aref handles index)
+                      do (ignore-errors (funcall (aref cleanups index)))
                       when handle
                         do (ignore-errors
                             (if session

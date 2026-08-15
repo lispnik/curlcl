@@ -118,6 +118,19 @@ package → conditions → library → types → varargs → easy-raw → memory
   libcurl waiting forever for those bytes was correct behaviour that looked
   exactly like a bug in the multi loop.
 
+- **CURLOPT_POSTFIELDS and CURLOPT_UPLOAD cancel each other.** Setting
+  POSTFIELDS -- even to the empty string, which a bodyless POST otherwise
+  needs -- replaces a streaming body arranged with UPLOAD, so the upload
+  silently becomes zero-length. Likewise CURLOPT_HTTPGET and CURLOPT_POST undo
+  UPLOAD, which is why a streamed POST sets its method with CUSTOMREQUEST.
+
+- **A dumped image must not carry a record of libcurl.** SBCL notes open shared
+  objects and dyld reopens them at startup *by soname*, which on macOS resolves
+  through the shared cache to the system libcurl -- so `bin/curlcl` ran 8.7.1
+  while the same code from source ran Homebrew's 8.21.0, with a different TLS
+  backend and no websockets. The image-dump hook closes the library so the
+  restore hook opens exactly one. Check with `curlcl -V`, which prints the path.
+
 - **Exported symbols collide with test helpers.** Three times a test-local
   `defun` or `defmacro` silently redefined a newly exported library function
   (`with-easy`, `header-value`, `response-header`). After adding to the export
