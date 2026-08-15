@@ -515,3 +515,119 @@ reporting progress" (- latest earliest))))))
                                    :session session)))
       (is (= 4 (length responses)))
       (is (every (lambda (r) (= 200 (response-status r))) responses)))))
+
+;;; Retry inside a batch ------------------------------------------------------
+
+(test request-many-retries-a-failing-request
+  (reset-flaky "batch-basic")
+  (let ((results (request-many
+                  (list (test-url "/ok")
+                        (test-url "/flaky?id=batch-basic&fail=2")
+                        (test-url "/ok"))
+                  :retry '(:max-attempts 5 :initial-delay 0.02))))
+    (is (= 3 (length results)))
+    (is (every (lambda (r) (and (typep r 'response) (= 200 (response-status r))))
+               results))
+    (is (search "succeeded on attempt 3" (response-body (second results))))))
+
+(test a-retried-request-does-not-stall-the-rest-of-the-batch
+  ;; The reason this needs a scheduler rather than a loop.  One request backs
+  ;; off for ~600ms while three quick ones run alongside it; if the retry were
+  ;; sequential, the quick ones would not report until after the wait.
+  (reset-flaky "batch-parallel")
+  (let ((finished '())
+        (start (get-internal-real-time)))
+    (flet ((elapsed () (/ (- (get-internal-real-time) start)
+                          internal-time-units-per-second 1.0)))
+      (let ((results (request-many
+                      (list (test-url "/flaky?id=batch-parallel&fail=1")
+                            (test-url "/ok")
+                            (test-url "/ok")
+                            (test-url "/ok"))
+                      :retry '(:max-attempts 3 :initial-delay 0.6 :jitter 0.0)
+                      :on-complete (lambda (index outcome)
+                                     (declare (ignore outcome))
+                                     (push (cons index (elapsed)) finished)))))
+        (is (every (lambda (r) (= 200 (response-status r))) results))
+        ;; The three healthy requests finished long before the retried one.
+        (let ((quick (loop for (index . at) in finished
+                           unless (zerop index) collect at))
+              (retried (cdr (assoc 0 finished))))
+          (is (= 3 (length quick)))
+          (is (every (lambda (at) (< at 0.3)) quick)
+              "the healthy requests were delayed by the retry: ~S" quick)
+          (is (> retried 0.55)
+              "the retried request did not actually wait its backoff (~,3Fs)"
+              retried))))))
+
+(test a-retried-request-does-not-accumulate-bodies-across-attempts
+  ;; Each attempt gets a fresh body sink.  Reusing it would prepend whatever
+  ;; the failed attempt delivered to the successful response -- and the flaky
+  ;; route sends a body on its failures, so this would show.
+  (reset-flaky "batch-body")
+  (let ((results (request-many
+                  (list (test-url "/flaky?id=batch-body&fail=2"))
+                  :retry '(:max-attempts 5 :initial-delay 0.02))))
+    (is (string= "succeeded on attempt 3" (response-body (first results))))
+    (is (not (search "failing" (response-body (first results))))
+        "the response body carries text from a failed attempt")))
+
+(test request-many-retries-transport-failures-too
+  (let ((attempts '()))
+    (let ((results (request-many
+                    (list (list "http://127.0.0.1:1/refused" :timeout 5)
+                          (test-url "/ok"))
+                    :retry '(:max-attempts 3 :initial-delay 0.02)
+                    :on-retry (lambda (index attempt delay reason)
+                                (declare (ignore delay reason))
+                                (push (cons index attempt) attempts)))))
+      (is (typep (first results) 'easy-error))
+      (is (= 200 (response-status (second results))))
+      ;; Two retries of request 0, and none of request 1.
+      (is (= 2 (count 0 attempts :key #'car)))
+      (is (zerop (count 1 attempts :key #'car))))))
+
+(test a-request-can-override-the-batch-retry-policy
+  (reset-flaky "batch-override-a")
+  (reset-flaky "batch-override-b")
+  (let ((results (request-many
+                  (list (test-url "/flaky?id=batch-override-a&fail=2")
+                        ;; This one opts out of retrying entirely.
+                        (list (test-url "/flaky?id=batch-override-b&fail=2")
+                              :retry nil))
+                  :retry '(:max-attempts 5 :initial-delay 0.02))))
+    (is (= 200 (response-status (first results))))
+    (is (= 503 (response-status (second results))))))
+
+(test post-is-not-retried-in-a-batch-unless-asked
+  (reset-flaky "batch-post")
+  (let ((results (request-many
+                  (list (list (test-url "/flaky?id=batch-post&fail=3")
+                              :method :post))
+                  :retry '(:max-attempts 4 :initial-delay 0.02))))
+    (is (= 503 (response-status (first results))))
+    (is (search "attempt 1 of 3" (response-body (first results))))))
+
+(test retries-give-up-after-the-limit-in-a-batch
+  (reset-flaky "batch-exhaust")
+  (let ((results (request-many
+                  (list (test-url "/flaky?id=batch-exhaust&fail=10"))
+                  :retry '(:max-attempts 3 :initial-delay 0.02))))
+    (is (= 503 (response-status (first results))))
+    ;; Three attempts made, and the last response is the one returned.
+    (is (search "attempt 3 of 10" (response-body (first results))))))
+
+(test retrying-works-through-a-session
+  ;; A retry resets the handle, which clears the share along with everything
+  ;; else; it has to go back on or the session's pooling silently stops.
+  (reset-flaky "batch-session")
+  (with-session (session)
+    (let ((results (request-many
+                    (list (test-url "/flaky?id=batch-session&fail=2")
+                          (test-url "/ok"))
+                    :session session
+                    :retry '(:max-attempts 5 :initial-delay 0.02))))
+      (is (= 200 (response-status (first results))))
+      (is (= 200 (response-status (second results))))
+      ;; The handles came back to the pool still attached to the share.
+      (is (plusp (length (libcurl::session-pool session)))))))

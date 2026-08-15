@@ -122,6 +122,15 @@ Content-Length: 0 and move on."
     (t (error 'curl-error
               :message (format nil "Cannot use ~S as a request body." content)))))
 
+(defun plist-value (plist key default)
+  "Like GETF, but distinguishes an explicit NIL from an absent key.
+
+That distinction is load-bearing for :RETRY, where NIL means \"do not retry
+this one\" and absent means \"use the batch policy\".  GETF collapses the two."
+  (loop for (present-key value) on plist by #'cddr
+        when (eq present-key key) return value
+        finally (return default)))
+
 (defun make-body-sink (handle output on-data)
   "Install a write callback and return a closure yielding the collected body.
 
@@ -331,24 +340,40 @@ Returns the RESPONSE, whose body is empty because the bytes went to the file."
 
 ;;; Many at once --------------------------------------------------------------
 
-(defun request-many (requests &key session (max-connections 8) on-complete)
-  "Run REQUESTS concurrently on one thread and return their responses in order.
+(defun request-many (requests &key session (max-connections 8)
+                                   on-complete retry on-retry
+                                   (poll-timeout-ms 1000))
+  "Run REQUESTS concurrently on one thread and return their outcomes in order.
 
 Each element of REQUESTS is either a URL or a list of (URL . OPTIONS) taking
 the same options as REQUEST.  Results come back positionally, so the Nth
-response corresponds to the Nth request; a request that failed at the
-transport level yields the CONDITION in its place rather than aborting the
-batch, because with several transfers in flight one failure is a fact about
-that transfer and not about the call.
+outcome corresponds to the Nth request; a request that failed at the transport
+level yields the CONDITION in its place rather than aborting the batch, because
+with several transfers in flight one failure is a fact about that transfer and
+not about the call.
 
-ON-COMPLETE, if given, is called with (index response-or-condition) at the
-moment that request finishes, not when the batch does -- so it can drive a
+ON-COMPLETE, if given, is called with (index outcome) at the moment that
+request reaches its final outcome, not when the batch does -- so it can drive a
 progress display.  The return value cannot arrive until the slowest request is
 done, which in a batch of mixed durations is long after the quick ones were.
 
-Note that :RETRY is not honoured here: retrying inside a batch would mean
-re-adding handles mid-flight, and the useful shape for that is to re-run the
-failures as a second batch."
+:RETRY takes the same specifications as REQUEST -- an attempt count, a plist,
+or a RETRY-POLICY -- and applies to every request in the batch; an individual
+request can override it with its own :RETRY.  ON-RETRY is called with
+(index attempt delay reason) before each wait.
+
+Retrying here is scheduled rather than sequential.  A failed request waits out
+its backoff while the rest of the batch keeps transferring, and is re-added
+when its delay expires; nothing blocks on anything else's recovery.  That is
+the whole difficulty of retrying inside a batch, and the reason this is a loop
+of its own rather than a call to RUN-TRANSFERS.
+
+One caveat worth stating plainly: a retried request delivers its body from the
+beginning.  With the default buffering that is invisible, because the buffer is
+replaced for each attempt.  With :OUTPUT or :ON-DATA it is not -- the consumer
+will have already seen whatever the failed attempt managed to deliver, and will
+then see the whole of the successful one.  Retrying a streamed request is only
+safe if the consumer can tolerate that."
   (let ((count (length requests)))
     (if (zerop count)
         '()
@@ -357,69 +382,134 @@ failures as a second batch."
                 (bodies (make-array count :initial-element nil))
                 (handles (make-array count :initial-element nil))
                 (methods (make-array count :initial-element :get))
-                ;; Indexed rather than looked up with NTH: results arrive in
+                (urls (make-array count :initial-element nil))
+                ;; Indexed rather than looked up with NTH: outcomes arrive in
                 ;; completion order, so a list walk would be quadratic.
-                (options-by-index (make-array count :initial-element nil)))
-            (unwind-protect
-                 (progn
-                   ;; Build every handle first, then let the multi schedule them.
-                   (loop for index below count
-                         for specification in requests
-                         do (destructuring-bind (url &rest options)
-                                (alexandria:ensure-list specification)
-                              (let* ((handle (if session
-                                                 (acquire-handle session)
-                                                 (make-easy-handle)))
-                                     (method (or (getf options :method) :get))
-                                     (configure
-                                       (loop for (key value) on options by #'cddr
-                                             unless (member key '(:retry :session
-                                                                  :force-binary
-                                                                  :force-string
-                                                                  :on-retry))
-                                               append (list key value))))
-                                (setf (aref handles index) handle
-                                      (aref methods index) method
-                                      (aref options-by-index index) options
-                                      (aref bodies index)
-                                      (apply #'configure-request handle url
-                                             configure))
-                                ;; The index travels with the handle, so a
-                                ;; result can be put back in the right slot.
-                                (setf (getf (handle-plist handle) :request-index)
-                                      index)
-                                (add-transfer multi handle))))
-                   ;; Results are placed as each transfer finishes rather than
-                   ;; after the batch, so ON-COMPLETE actually reports progress:
-                   ;; the return value cannot arrive until the slowest request
-                   ;; is done, which in a mixed batch is long after the quick
-                   ;; ones were.
-                   (run-transfers
-                    multi
-                    :on-result
-                    (lambda (result)
-                      (let* ((handle (result-handle result))
-                             (index (getf (handle-plist handle) :request-index))
-                             (options (aref options-by-index index))
-                             (outcome
-                               (if (result-successful-p result)
-                                   (make-response-from-handle
-                                    handle (funcall (aref bodies index))
-                                    :request-method (aref methods index)
-                                    :force-binary (getf options :force-binary)
-                                    :force-string (getf options :force-string))
-                                   ;; Turn the result into the condition it
-                                   ;; would have been, without signalling.
-                                   (handler-case (signal-failed-transfers
-                                                  (list result))
-                                     (curl-error (condition) condition)))))
-                        (setf (aref results index) outcome)
-                        (when on-complete (funcall on-complete index outcome)))))
-                   (coerce results 'list))
-              (loop for index below count
-                    for handle = (aref handles index)
-                    when handle
-                      do (ignore-errors
-                          (if session
-                              (release-handle session handle)
-                              (close-handle handle))))))))))
+                (option-lists (make-array count :initial-element nil))
+                (policies (make-array count :initial-element nil))
+                (attempts (make-array count :initial-element 0))
+                ;; (due-time . index) for requests waiting out a backoff.
+                (scheduled '())
+                ;; Requests with no final outcome yet.  Every one of them is
+                ;; either running in the multi or sitting in SCHEDULED, which
+                ;; is what makes the loop below terminate.
+                (outstanding count))
+            (labels
+                ((now () (/ (get-internal-real-time)
+                            internal-time-units-per-second 1.0))
+                 (transfer-options (options)
+                   (loop for (key value) on options by #'cddr
+                         unless (member key '(:retry :session :force-binary
+                                              :force-string :on-retry))
+                           append (list key value)))
+                 (start (index)
+                   (let ((handle (aref handles index)))
+                     (when (plusp (aref attempts index))
+                       ;; A retry: this handle has already run once.  Reset
+                       ;; rather than replace it, so its connection cache
+                       ;; survives -- but reset clears every option, including
+                       ;; the share, so that has to go back on.
+                       (reset-handle handle)
+                       (when session
+                         (attach-share handle (session-share session))))
+                     ;; A fresh body sink per attempt.  Reusing the old one
+                     ;; would prepend whatever the failed attempt managed to
+                     ;; deliver to the successful response.
+                     (setf (aref bodies index)
+                           (apply #'configure-request handle (aref urls index)
+                                  (transfer-options (aref option-lists index)))
+                           (getf (handle-plist handle) :request-index) index)
+                     (incf (aref attempts index))
+                     (add-transfer multi handle)))
+                 (finish (index outcome)
+                   (setf (aref results index) outcome)
+                   (decf outstanding)
+                   (when on-complete (funcall on-complete index outcome)))
+                 (schedule (index delay reason)
+                   (when on-retry
+                     (funcall on-retry index (aref attempts index) delay reason))
+                   (push (cons (+ (now) delay) index) scheduled))
+                 (settle (index outcome retryable-p)
+                   (let ((policy (aref policies index)))
+                     (if (and (< (aref attempts index) (retry-max-attempts policy))
+                              (funcall retryable-p policy outcome)
+                              (retryable-method-p policy (aref methods index)))
+                         (schedule index
+                                   (retry-delay policy (aref attempts index)
+                                                :retry-after
+                                                (when (typep outcome 'response)
+                                                  (response-retry-after outcome)))
+                                   outcome)
+                         (finish index outcome))))
+                 (process (result)
+                   (let* ((handle (result-handle result))
+                          (index (getf (handle-plist handle) :request-index))
+                          (options (aref option-lists index)))
+                     (if (result-successful-p result)
+                         (settle index
+                                 (make-response-from-handle
+                                  handle (funcall (aref bodies index))
+                                  :request-method (aref methods index)
+                                  :force-binary (getf options :force-binary)
+                                  :force-string (getf options :force-string))
+                                 #'retryable-response-p)
+                         (settle index
+                                 ;; Turn the result into the condition it would
+                                 ;; have been, without signalling.
+                                 (handler-case (signal-failed-transfers
+                                                (list result))
+                                   (curl-error (condition) condition))
+                                 #'retryable-condition-p))))
+                 (start-due ()
+                   (let ((moment (now)))
+                     (setf scheduled
+                           (remove-if (lambda (entry)
+                                        (when (<= (car entry) moment)
+                                          (start (cdr entry))
+                                          t))
+                                      scheduled))))
+                 (wait-time ()
+                   ;; Never sleep past the next retry.  With nothing running,
+                   ;; curl_multi_poll sleeps out the timeout, which is exactly
+                   ;; the wait a pending backoff wants.
+                   (if scheduled
+                       (max 0 (min poll-timeout-ms
+                                   (ceiling (* 1000 (- (reduce #'min scheduled
+                                                               :key #'car)
+                                                       (now))))))
+                       poll-timeout-ms)))
+              (unwind-protect
+                   (progn
+                     (loop for index below count
+                           for specification in requests
+                           do (destructuring-bind (url &rest options)
+                                  (alexandria:ensure-list specification)
+                                (setf (aref handles index)
+                                      (if session
+                                          (acquire-handle session)
+                                          (make-easy-handle))
+                                      (aref urls index) url
+                                      (aref option-lists index) options
+                                      (aref methods index) (or (getf options :method)
+                                                               :get)
+                                      ;; A request may override the batch
+                                      ;; policy, including with an explicit NIL
+                                      ;; to opt out of retrying -- which GETF
+                                      ;; could not tell from not asking.
+                                      (aref policies index)
+                                      (make-retry (plist-value options :retry retry)))
+                                (start index)))
+                     (loop while (plusp outstanding)
+                           do (multi-perform multi)
+                              (mapc #'process (read-multi-messages multi))
+                              (start-due)
+                              (when (plusp outstanding)
+                                (multi-poll multi :timeout-ms (wait-time))))
+                     (coerce results 'list))
+                (loop for index below count
+                      for handle = (aref handles index)
+                      when handle
+                        do (ignore-errors
+                            (if session
+                                (release-handle session handle)
+                                (close-handle handle)))))))))))

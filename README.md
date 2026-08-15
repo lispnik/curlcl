@@ -147,6 +147,19 @@ because only you know whether repeating one duplicates an order.
 
 A failure sits in its own slot as a condition rather than aborting the batch.
 
+Retries work here too, and are scheduled rather than sequential — a request
+waits out its backoff while the rest of the batch keeps transferring:
+
+```lisp
+(curl:request-many urls
+                   :retry '(:max-attempts 4 :initial-delay 0.4)
+                   :on-complete (lambda (index outcome) (report index outcome)))
+```
+
+`:on-complete` fires as each request reaches its final outcome, so it can drive
+a progress display; an individual request can override the batch policy, or opt
+out with `:retry nil`.
+
 ### The binding underneath
 
 The client is a thin layer; the whole C API is there if you want it.
