@@ -1,0 +1,111 @@
+# Windows is one of three platform workflows -- ci-linux.yml, ci-macos.yml and
+# ci-windows.yml -- rather than a matrix in one file, so that each platform
+# gets its own status badge.  GitHub's badge endpoint reports a whole
+# workflow and silently ignores a ?job= parameter, so a matrix leg cannot be
+# badged on its own; splitting the files is the only way to make the three
+# badges in README.md mean what they appear to mean.
+#
+# Windows runs the same suite as the Unix workflows, but everything around it
+# differs: SBCL comes from Chocolatey, the C toolchain and libffi and libcurl
+# from MSYS2, and the steps are PowerShell.  What it catches is real --
+# curl_socket_t is a different width here, standard output is a handle rather
+# than a descriptor, and CRLF checkouts break FORMAT's line-continuation
+# directive.
+
+name: Windows
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    name: sbcl · windows-latest
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install SBCL
+        shell: pwsh
+        run: choco install sbcl --no-progress -y
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-libffi
+            mingw-w64-x86_64-curl
+            mingw-w64-x86_64-pkg-config
+
+      - name: Put the MinGW toolchain and DLLs on PATH
+        shell: pwsh
+        run: |
+          echo "D:\a\_temp\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\Program Files\Steel Bank Common Lisp" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Report what is available
+        shell: pwsh
+        run: |
+          sbcl --version
+          gcc --version
+          pkg-config --modversion libffi
+          Get-ChildItem D:\a\_temp\msys64\mingw64\bin\libcurl*.dll
+
+      - name: Install and configure ocicl
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/ocicl/ocicl.git $env:USERPROFILE\ocicl-src
+          cd $env:USERPROFILE\ocicl-src
+          sbcl --non-interactive --load setup.lisp
+          # setup.lisp does not put ocicl on PATH on Windows, and where it
+          # lands differs from Unix, so find it rather than guess.
+          $found = Get-ChildItem -Path $env:USERPROFILE, $env:LOCALAPPDATA -Filter "ocicl*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $found) { Write-Host "ocicl executable not found after setup"; Get-ChildItem -Path $env:USERPROFILE -Recurse -Filter "ocicl*" -ErrorAction SilentlyContinue | Select-Object -First 20 FullName; exit 1 }
+          Write-Host "ocicl at $($found.FullName)"
+          echo "$($found.DirectoryName)" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Restore dependencies
+        shell: pwsh
+        run: |
+          ocicl setup
+          ocicl install
+
+      - name: Load the system
+        shell: pwsh
+        run: |
+          sbcl --non-interactive `
+            --load "$env:USERPROFILE\AppData\Local\ocicl\ocicl-runtime.lisp" `
+            --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' `
+            --eval '(asdf:load-system :curlcl)' `
+            --eval '(format t "~&libcurl ~A at ~A~%" (curlcl:libcurl-version) (curlcl:libcurl-pathname))'
+
+      # Same reason as the Unix workflows: the CLI suite runs the real binary
+      # and skips its end-to-end cases when there isn't one.
+      - name: Build the executable
+        shell: pwsh
+        run: |
+          sbcl --non-interactive `
+            --load "$env:USERPROFILE\AppData\Local\ocicl\ocicl-runtime.lisp" `
+            --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' `
+            --eval '(asdf:make :curlcl/cli)'
+          Get-ChildItem bin
+          $exe = (Get-ChildItem bin\curlcl* | Select-Object -First 1).FullName
+          & $exe -V
+          # Verbose and allowed to fail: the point is to see what the driver
+          # says on stderr, which is the part the test suite cannot show when
+          # every case fails at once.
+          & $exe -v -o NUL -w 'smoke: %{http_code} in %{time_total}s' https://example.com/
+          Write-Host "smoke exit: $LASTEXITCODE"
+
+      - name: Run tests
+        shell: pwsh
+        run: |
+          sbcl --non-interactive `
+            --load "$env:USERPROFILE\AppData\Local\ocicl\ocicl-runtime.lisp" `
+            --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' `
+            --eval '(asdf:load-system :curlcl/test)' `
+            --eval '(uiop:quit (if (curlcl/test:run-tests) 0 1))'

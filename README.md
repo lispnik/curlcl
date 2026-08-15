@@ -2,7 +2,9 @@
 
 libcurl is installed everywhere already, make use of it
 
-[![CI](https://github.com/lispnik/curlcl/actions/workflows/ci.yml/badge.svg)](https://github.com/lispnik/curlcl/actions/workflows/ci.yml)
+[![Linux](https://github.com/lispnik/curlcl/actions/workflows/ci-linux.yml/badge.svg)](https://github.com/lispnik/curlcl/actions/workflows/ci-linux.yml)
+[![macOS](https://github.com/lispnik/curlcl/actions/workflows/ci-macos.yml/badge.svg)](https://github.com/lispnik/curlcl/actions/workflows/ci-macos.yml)
+[![Windows](https://github.com/lispnik/curlcl/actions/workflows/ci-windows.yml/badge.svg)](https://github.com/lispnik/curlcl/actions/workflows/ci-windows.yml)
 
 A comprehensive Common Lisp binding to libcurl — the easy interface with all
 308 of its options and 78 info values, multi, share, the URL parser, MIME,
@@ -308,14 +310,20 @@ HTTP/2, and connection reuse observed through timing.
 ## Implementations
 
 Developed and tested on SBCL, which is what CI runs on macOS, Linux and
-Windows.
+Windows — one workflow per platform, so each badge above reports its own
+platform. That is not cosmetic: GitHub's badge endpoint reports a whole
+workflow and silently ignores a `?job=` parameter, so three badges pointed at
+one matrix would all have shown the same status no matter which platform
+broke. The three are not redundant either — macOS is where a variadic
+argument goes on the stack, Linux is where it goes in a register, and Windows
+is where `curl_socket_t` is eight bytes wide.
 
 The library itself is close to portable: the only implementation-specific code
 is a bulk octet copy in `memory.lisp`, which has a portable fallback, and it
 loads and performs real HTTPS requests on ECL. The full suite does not yet pass
 there — it gets through fifteen suites and stalls in the sixteenth, apparently
 because the in-process test server spawns a thread per keep-alive connection
-and never reaps them — so ECL is **not** in the CI matrix and should be treated
+and never reaps them — so ECL is **not** in CI and should be treated
 as unverified rather than supported.
 
 `bin/curlcl` needs a byte stream on standard input and output, which the
