@@ -230,25 +230,36 @@ finished and holding it adds nothing."
                    :condition (when easy (cb-condition (handle-callbacks easy))))
           do (when easy (remove-transfer multi easy)))))
 
-(defun run-transfers (multi &key (timeout-ms 1000))
+(defun run-transfers (multi &key (timeout-ms 1000) on-result)
   "Drive MULTI until every transfer has finished.  Returns their results.
 
 The ordinary way to use the multi interface: perform, wait for something to
 happen, repeat.  Results come back as TRANSFER-RESULT structs rather than as
 signalled conditions, because with several transfers in flight a failure is a
 fact about one of them rather than about the call -- see SIGNAL-FAILED-TRANSFERS
-for the other behaviour."
+for the other behaviour.
+
+ON-RESULT, if given, is called with each TRANSFER-RESULT at the moment it is
+read, which is the only way to see progress: the return value cannot arrive
+until the slowest transfer has finished, and in a batch of mixed durations
+that is long after the quick ones were done."
   (let ((results '()))
-    (loop
-      (let ((running (multi-perform multi)))
-        (setf results (append results (read-multi-messages multi)))
-        (when (zerop running)
-          ;; One last drain: the message for the final transfer is queued by
-          ;; the same perform that dropped the running count to zero.
-          (setf results (append results (read-multi-messages multi)))
-          (return))
-        (multi-poll multi :timeout-ms timeout-ms)))
-    results))
+    (flet ((drain ()
+             (dolist (result (read-multi-messages multi))
+               (push result results)
+               (when on-result (funcall on-result result)))))
+      (loop
+        (let ((running (multi-perform multi)))
+          (drain)
+          (when (zerop running)
+            ;; One last drain: the message for the final transfer is queued by
+            ;; the same perform that dropped the running count to zero.
+            (drain)
+            (return))
+          (multi-poll multi :timeout-ms timeout-ms))))
+    ;; Accumulated by PUSH rather than APPEND: appending to the tail on every
+    ;; pass is quadratic in the number of transfers.
+    (nreverse results)))
 
 (defun signal-failed-transfers (results)
   "Signal the first failure in RESULTS, or return RESULTS unchanged.

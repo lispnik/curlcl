@@ -341,8 +341,10 @@ transport level yields the CONDITION in its place rather than aborting the
 batch, because with several transfers in flight one failure is a fact about
 that transfer and not about the call.
 
-ON-COMPLETE, if given, is called with (index response-or-condition) as each
-finishes, which is what makes progress visible before the whole batch is done.
+ON-COMPLETE, if given, is called with (index response-or-condition) at the
+moment that request finishes, not when the batch does -- so it can drive a
+progress display.  The return value cannot arrive until the slowest request is
+done, which in a batch of mixed durations is long after the quick ones were.
 
 Note that :RETRY is not honoured here: retrying inside a batch would mean
 re-adding handles mid-flight, and the useful shape for that is to re-run the
@@ -354,7 +356,10 @@ failures as a second batch."
           (let ((results (make-array count :initial-element nil))
                 (bodies (make-array count :initial-element nil))
                 (handles (make-array count :initial-element nil))
-                (methods (make-array count :initial-element :get)))
+                (methods (make-array count :initial-element :get))
+                ;; Indexed rather than looked up with NTH: results arrive in
+                ;; completion order, so a list walk would be quadratic.
+                (options-by-index (make-array count :initial-element nil)))
             (unwind-protect
                  (progn
                    ;; Build every handle first, then let the multi schedule them.
@@ -375,6 +380,7 @@ failures as a second batch."
                                                append (list key value))))
                                 (setf (aref handles index) handle
                                       (aref methods index) method
+                                      (aref options-by-index index) options
                                       (aref bodies index)
                                       (apply #'configure-request handle url
                                              configure))
@@ -383,25 +389,32 @@ failures as a second batch."
                                 (setf (getf (handle-plist handle) :request-index)
                                       index)
                                 (add-transfer multi handle))))
-                   (dolist (result (run-transfers multi))
-                     (let* ((handle (result-handle result))
-                            (index (getf (handle-plist handle) :request-index))
-                            (options (rest (alexandria:ensure-list
-                                            (nth index requests))))
-                            (outcome
-                              (if (result-successful-p result)
-                                  (make-response-from-handle
-                                   handle (funcall (aref bodies index))
-                                   :request-method (aref methods index)
-                                   :force-binary (getf options :force-binary)
-                                   :force-string (getf options :force-string))
-                                  ;; Turn the result into the condition it
-                                  ;; would have been, without signalling.
-                                  (handler-case (signal-failed-transfers
-                                                 (list result))
-                                    (curl-error (condition) condition)))))
-                       (setf (aref results index) outcome)
-                       (when on-complete (funcall on-complete index outcome))))
+                   ;; Results are placed as each transfer finishes rather than
+                   ;; after the batch, so ON-COMPLETE actually reports progress:
+                   ;; the return value cannot arrive until the slowest request
+                   ;; is done, which in a mixed batch is long after the quick
+                   ;; ones were.
+                   (run-transfers
+                    multi
+                    :on-result
+                    (lambda (result)
+                      (let* ((handle (result-handle result))
+                             (index (getf (handle-plist handle) :request-index))
+                             (options (aref options-by-index index))
+                             (outcome
+                               (if (result-successful-p result)
+                                   (make-response-from-handle
+                                    handle (funcall (aref bodies index))
+                                    :request-method (aref methods index)
+                                    :force-binary (getf options :force-binary)
+                                    :force-string (getf options :force-string))
+                                   ;; Turn the result into the condition it
+                                   ;; would have been, without signalling.
+                                   (handler-case (signal-failed-transfers
+                                                  (list result))
+                                     (curl-error (condition) condition)))))
+                        (setf (aref results index) outcome)
+                        (when on-complete (funcall on-complete index outcome)))))
                    (coerce results 'list))
               (loop for index below count
                     for handle = (aref handles index)

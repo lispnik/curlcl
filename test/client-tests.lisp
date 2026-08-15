@@ -454,13 +454,57 @@
     (is (= 404 (response-status (third responses))))))
 
 (test request-many-reports-progress-as-each-finishes
-  (let ((completed '()))
-    (request-many (loop repeat 4 collect (test-url "/ok"))
-                  :on-complete (lambda (index outcome)
-                                 (push (cons index (response-status outcome))
-                                       completed)))
-    (is (= 4 (length completed)))
-    (is (equal '(0 1 2 3) (sort (mapcar #'car completed) #'<)))))
+  ;; Not merely that ON-COMPLETE is called with the right arguments, but that
+  ;; it is called *when each request finishes*.  The first version of this
+  ;; delegated to RUN-TRANSFERS, which accumulates internally and returns only
+  ;; once nothing is running -- so every callback fired in a burst at the end,
+  ;; and a progress bar driven by it would have sat at zero and jumped to done.
+  ;; The requests below take roughly 50, 200, 400 and 800 milliseconds.
+  (let ((completed '())
+        (start (get-internal-real-time)))
+    (flet ((elapsed () (/ (- (get-internal-real-time) start)
+                          internal-time-units-per-second 1.0)))
+      (request-many (list (test-url "/drip?n=1&ms=50")
+                          (test-url "/drip?n=4&ms=50")
+                          (test-url "/drip?n=8&ms=50")
+                          (test-url "/drip?n=16&ms=50"))
+                    :on-complete (lambda (index outcome)
+                                   (push (list index (response-status outcome)
+                                               (elapsed))
+                                         completed)))
+      (setf completed (nreverse completed))
+      (is (= 4 (length completed)))
+      (is (equal '(0 1 2 3) (sort (mapcar #'first completed) #'<)))
+      (is (every (lambda (entry) (= 200 (second entry))) completed))
+      ;; The quickest must be reported well before the slowest.  A burst at the
+      ;; end would put every timestamp within a millisecond of the others.
+      (let ((earliest (reduce #'min completed :key #'third))
+            (latest (reduce #'max completed :key #'third)))
+        (is (< 0.2 (- latest earliest))
+            "every callback fired at once (~,3Fs apart); ON-COMPLETE is not ~
+reporting progress" (- latest earliest))))))
+
+(test run-transfers-reports-each-result-as-it-is-read
+  ;; The same guarantee one layer down, since RUN-TRANSFERS is public API.
+  (with-multi (multi)
+    (let ((handles (list (make-collecting-handle "/drip?n=1&ms=50")
+                         (make-collecting-handle "/drip?n=12&ms=50")))
+          (seen '())
+          (start (get-internal-real-time)))
+      (unwind-protect
+           (progn
+             (dolist (handle handles) (add-transfer multi handle))
+             (run-transfers multi
+                            :on-result
+                            (lambda (result)
+                              (declare (ignore result))
+                              (push (/ (- (get-internal-real-time) start)
+                                       internal-time-units-per-second 1.0)
+                                    seen)))
+             (is (= 2 (length seen)))
+             (is (< 0.2 (abs (- (first seen) (second seen))))
+                 "both results were reported at the same moment"))
+        (dolist (handle handles) (close-handle handle))))))
 
 (test request-many-handles-an-empty-list
   (is (null (request-many '()))))
