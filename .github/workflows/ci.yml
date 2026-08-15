@@ -76,3 +76,73 @@ jobs:
             --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' \
             --eval '(asdf:load-system :libcurl/test)' \
             --eval '(uiop:quit (if (libcurl/test:run-tests) 0 1))'
+
+  # Exploratory.  The binding rests on cffi-libffi for its variadic calls, and
+  # that needs a libffi build and a C compiler for its grovel step -- which is
+  # the part of Windows support that is genuinely in doubt.  MSYS2 supplies
+  # gcc, libffi and libcurl; SBCL comes from Chocolatey.
+  windows:
+    name: sbcl · windows-latest
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install SBCL
+        shell: pwsh
+        run: choco install sbcl --no-progress -y
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-libffi
+            mingw-w64-x86_64-curl
+            mingw-w64-x86_64-pkg-config
+
+      - name: Put the MinGW toolchain and DLLs on PATH
+        shell: pwsh
+        run: |
+          echo "D:\a\_temp\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\Program Files\Steel Bank Common Lisp" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Report what is available
+        shell: pwsh
+        run: |
+          sbcl --version
+          gcc --version
+          pkg-config --modversion libffi
+          Get-ChildItem D:\a\_temp\msys64\mingw64\bin\libcurl*.dll
+
+      - name: Install and configure ocicl
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/ocicl/ocicl.git $env:USERPROFILE\ocicl-src
+          cd $env:USERPROFILE\ocicl-src
+          sbcl --non-interactive --load setup.lisp
+          echo "$env:USERPROFILE\.local\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Restore dependencies
+        shell: pwsh
+        run: |
+          ocicl setup
+          ocicl install
+
+      - name: Load the system
+        shell: pwsh
+        run: |
+          sbcl --non-interactive `
+            --load "$env:USERPROFILE\AppData\Local\ocicl\ocicl-runtime.lisp" `
+            --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' `
+            --eval '(asdf:load-system :libcurl)' `
+            --eval '(format t "~&libcurl ~A at ~A~%" (libcurl:libcurl-version) (libcurl:libcurl-pathname))'
+
+      - name: Run tests
+        shell: pwsh
+        run: |
+          sbcl --non-interactive `
+            --load "$env:USERPROFILE\AppData\Local\ocicl\ocicl-runtime.lisp" `
+            --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' `
+            --eval '(asdf:load-system :libcurl/test)' `
+            --eval '(uiop:quit (if (libcurl/test:run-tests) 0 1))'
