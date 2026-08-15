@@ -30,11 +30,38 @@
 
 ;;; Output --------------------------------------------------------------------
 
+(defun fd-byte-stream (fd direction)
+  "A byte stream on FD, for standard input and standard output.
+
+Every implementation can do this; none of them spells it the same way, and the
+standard offers no way at all -- an existing stream's element type cannot be
+changed, and *STANDARD-INPUT* is a character stream whose external format would
+mangle arbitrary bytes.  Hence the clauses.  The /dev/fd fallback covers any
+Unix implementation not named here; only Windows is left without a route, and
+this program has never been run there."
+  (declare (ignorable direction))
+  #+sbcl (sb-sys:make-fd-stream fd :input (eq direction :input)
+                                   :output (eq direction :output)
+                                   :element-type '(unsigned-byte 8)
+                                   :buffering :full)
+  #+ecl (ext:make-stream-from-fd fd (if (eq direction :input) :input :output)
+                                 :element-type '(unsigned-byte 8))
+  #+ccl (ccl:make-fd-stream fd :direction direction
+                               :element-type '(unsigned-byte 8)
+                               :sharing :lock)
+  #+clisp (ext:make-stream fd :direction direction
+                              :element-type '(unsigned-byte 8))
+  #-(or sbcl ecl ccl clisp)
+  (let ((path (format nil "/dev/fd/~D" fd)))
+    (unless (probe-file path)
+      (error "No way to open file descriptor ~D as a byte stream on this ~
+implementation, and ~A does not exist." fd path))
+    (open path :direction direction :element-type '(unsigned-byte 8)
+               :if-exists :append)))
+
 (defun binary-stdin ()
   "A byte stream on file descriptor 0, for `-T -'."
-  #+sbcl (sb-sys:make-fd-stream 0 :input t :element-type '(unsigned-byte 8)
-                                  :buffering :full)
-  #-sbcl (error "No binary standard input on this implementation."))
+  (fd-byte-stream 0 :input))
 
 (defvar *binary-stdout* nil)
 
@@ -48,11 +75,7 @@ them.
 Memoised: several buffered streams on one descriptor interleave their flushes,
 which under --parallel would shuffle the bodies together."
   (or *binary-stdout*
-      (setf *binary-stdout*
-            #+sbcl (sb-sys:make-fd-stream 1 :output t
-                                            :element-type '(unsigned-byte 8)
-                                            :buffering :full)
-            #-sbcl (error "No binary standard output on this implementation."))))
+      (setf *binary-stdout* (fd-byte-stream 1 :output))))
 
 (defun message (control &rest arguments)
   "Write a diagnostic to standard error, as curl does."

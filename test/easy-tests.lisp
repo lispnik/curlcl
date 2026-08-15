@@ -105,7 +105,7 @@
     (let ((body (collect-body handle)))
       (setopt handle :url (test-url "/echo"))
       (setopt handle :postfields (concatenate 'string "payload=" "0123456789"))
-      (sb-ext:gc :full t)
+      (force-gc)
       (perform handle)
       (is (search "body=payload=0123456789" (body-string (funcall body)))))))
 
@@ -126,7 +126,7 @@
     (let ((body (collect-body handle)))
       (setopt handle :url (test-url "/echo"))
       (setopt handle :httpheader (list (format nil "X-Generated: ~D" 99)))
-      (sb-ext:gc :full t)
+      (force-gc)
       (perform handle)
       (is (search "x-generated: 99" (body-string (funcall body)))))))
 

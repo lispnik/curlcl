@@ -131,6 +131,12 @@ package → conditions → library → types → varargs → easy-raw → memory
   backend and no websockets. The image-dump hook closes the library so the
   restore hook opens exactly one. Check with `curlcl -V`, which prints the path.
 
+- **Implementation-specific code is confined to three places**, and there is no
+  `#-sbcl (error ...)` left: the bulk octet copy in `memory.lisp` (portable
+  fallback), `fd-byte-stream` in `cli.lisp` (SBCL/ECL/CCL/CLISP clauses plus a
+  /dev/fd fallback), and `force-gc` in the tests. ECL loads the library and
+  performs requests, but the full suite stalls partway, so it is not in CI.
+
 - **Exported symbols collide with test helpers.** Three times a test-local
   `defun` or `defmacro` silently redefined a newly exported library function
   (`with-easy`, `header-value`, `response-header`). After adding to the export

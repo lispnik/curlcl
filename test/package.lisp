@@ -78,6 +78,19 @@ CURL_LIVE_TESTS is set."
 loaded libcurl was built without ws/wss."
   :in all-tests)
 
+(defun force-gc ()
+  "Run a full collection, for the tests that check a foreign buffer outlives
+the Lisp object it was built from.  Spelled per implementation because there is
+no portable way to ask."
+  #+sbcl (sb-ext:gc :full t)
+  #+ecl (ext:gc t)
+  #+ccl (ccl:gc)
+  #+clasp (gctools:garbage-collect)
+  #+abcl (ext:gc)
+  #+allegro (excl:gc t)
+  #+lispworks (hcl:gc-generation t)
+  #-(or sbcl ecl ccl clasp abcl allegro lispworks) nil)
+
 (defun run-tests ()
   "Run every libcurl test.  Returns true when they all pass."
   (let ((results (run 'all-tests)))

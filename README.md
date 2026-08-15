@@ -1,4 +1,6 @@
-# libcurl
+# libcurl binding for Common Lisp
+
+libcurl is installed everywhere already, make use of it
 
 [![CI](https://github.com/lispnik/libcurl/actions/workflows/ci.yml/badge.svg)](https://github.com/lispnik/libcurl/actions/workflows/ci.yml)
 
@@ -280,6 +282,23 @@ HTTP/2, and connection reuse observed through timing.
 - **Websockets are feature-gated at runtime**, since whether `ws://` works is a
   property of the loaded library. macOS ships the headers for a libcurl built
   without it. libcurl marks this API experimental; that caveat is passed on.
+
+## Implementations
+
+Developed and tested on SBCL, which is what CI runs on macOS and Linux.
+
+The library itself is close to portable: the only implementation-specific code
+is a bulk octet copy in `memory.lisp`, which has a portable fallback, and it
+loads and performs real HTTPS requests on ECL. The full suite does not yet pass
+there — it gets through fifteen suites and stalls in the sixteenth, apparently
+because the in-process test server spawns a thread per keep-alive connection
+and never reaps them — so ECL is **not** in the CI matrix and should be treated
+as unverified rather than supported.
+
+`bin/curlcl` needs a byte stream on file descriptors 0 and 1, which the
+standard has no way to ask for. There are clauses for SBCL, ECL, CCL and CLISP,
+and a `/dev/fd` fallback for any other Unix implementation; only Windows is
+left without a route.
 
 ## What is not bound, and why
 
