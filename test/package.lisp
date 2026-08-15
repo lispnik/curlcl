@@ -8,7 +8,7 @@
            #:all-tests
            ;; Suites.
            #:library #:types #:varargs #:tables #:easy
-           #:url #:headers #:mime #:share #:multi #:websockets))
+           #:url #:headers #:mime #:share #:multi #:websockets #:client))
 
 (in-package #:libcurl/test)
 
@@ -53,6 +53,10 @@
 
 (def-suite multi
   :description "Many transfers on one thread."
+  :in all-tests)
+
+(def-suite client
+  :description "The HTTP client: requests, responses, retry, sessions."
   :in all-tests)
 
 (def-suite websockets

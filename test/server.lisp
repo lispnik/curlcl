@@ -26,6 +26,14 @@
 (defstruct (request (:conc-name request-))
   method path version headers body)
 
+(defvar *flaky-counts* (make-hash-table :test 'equal)
+  "How many times each /flaky id has been requested.")
+(defvar *flaky-lock* (bt:make-lock "flaky route"))
+
+(defun reset-flaky (&optional id)
+  (bt:with-lock-held (*flaky-lock*)
+    (if id (remhash id *flaky-counts*) (clrhash *flaky-counts*))))
+
 ;;; Byte-level plumbing -------------------------------------------------------
 
 (defun write-ascii (stream string)
@@ -213,6 +221,21 @@ Connection: close~C~C~C~C"
        (write-ascii stream "only ten")
        (force-output stream)
        (return-from handle-request :close))
+
+      ;; Fails the first N times it is asked, then succeeds.  Keyed by ID so
+      ;; concurrent tests do not share a counter.  This is what makes retry
+      ;; behaviour testable at all: a route that is reliably unreliable.
+      ((string= path "/flaky")
+       (let* ((id (or (cdr (assoc "id" query :test #'string=)) "default"))
+              (failures (query-integer query "fail" 1))
+              (status (query-integer query "status" 503))
+              (seen (bt:with-lock-held (*flaky-lock*)
+                      (incf (gethash id *flaky-counts* 0)))))
+         (if (<= seen failures)
+             (send-response stream status
+                            :body (format nil "attempt ~D of ~D failing" seen failures))
+             (send-response stream 200
+                            :body (format nil "succeeded on attempt ~D" seen)))))
 
       ((string= path "/retry-after")
        (send-response stream 429 :body "slow down"

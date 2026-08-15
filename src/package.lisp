@@ -197,4 +197,67 @@
    #:frame-flags
    #:frame-offset
    #:frame-bytes-left
-   #:frame-length))
+   #:frame-length
+
+   ;; The HTTP client.  The verbs are HTTP-GET and HTTP-POST rather than GET
+   ;; and POST because CL:GET and CL:DELETE already exist, and shadowing them
+   ;; in a library other code will :USE costs more than the shorter name is
+   ;; worth.  A non-2xx status is a response, not an error; only transport
+   ;; failures signal.
+   #:request
+   #:http-get
+   #:http-post
+   #:http-put
+   #:http-patch
+   #:http-delete
+   #:http-head
+   #:http-options
+   #:download
+   #:request-many
+
+   ;; Responses.
+   #:response
+   #:response-status
+   #:response-body
+   #:response-url
+   #:response-version
+   #:response-request-method
+   #:response-timings
+   #:response-redirect-count
+   #:response-header-values
+   #:response-content-type
+   #:response-text
+   #:response-octets
+   #:successful-response-p
+   #:parse-content-type
+   #:decode-body
+
+   ;; Retry policy.  libcurl has none of its own; POST and PATCH are excluded
+   ;; from retries unless asked, since only the caller knows whether repeating
+   ;; one duplicates an effect.
+   #:retry-policy
+   #:make-retry-policy
+   #:make-retry
+   #:*retryable-codes*
+   #:*retryable-statuses*
+   #:*idempotent-methods*
+
+   ;; Sessions: pooled handles over a share, so connections, DNS answers, TLS
+   ;; sessions and cookies are common to a run of requests.
+   #:session
+   #:make-session
+   #:close-session
+   #:with-session
+   #:session-share
+   #:session-closed-p
+   #:session-defaults
+   #:acquire-handle
+   #:release-handle
+   #:with-session-handle
+   #:session-cookies
+   #:clear-session-cookies
+
+   ;; Defaults worth overriding.
+   #:*default-user-agent*
+   #:*default-timeout*
+   #:*default-connect-timeout*))

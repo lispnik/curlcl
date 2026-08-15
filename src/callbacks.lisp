@@ -75,7 +75,12 @@ null userdata libcurl passes when a *DATA option was never set.")
   ;; Multi-handle callbacks.  They live here rather than in a separate struct
   ;; because a multi handle registers exactly the same way an easy handle does,
   ;; and the trampolines find both through the one registry.
-  socket timer push notify)
+  socket timer push notify
+  ;; Which slots have had their trampoline wired into libcurl.  Needed because
+  ;; curl_easy_duphandle and curl_easy_reset both require re-installing them,
+  ;; and "has a closure" is not the same question: a slot whose closure was
+  ;; cleared still has our trampoline installed, deliberately.
+  (installed '() :type list))
 
 (defun register-callback-state (state)
   "Assign STATE a key and install it.  Returns the key."

@@ -101,6 +101,14 @@ libcurl might call into it, which would keep the handle alive anyway."
              ;; libcurl's default is to use signals for the DNS timeout, which
              ;; is hostile to a Lisp runtime that installs its own handlers.
              (%set-option handle :nosignal 1)
+             ;; Install the write and header trampolines up front, with no
+             ;; closures behind them.  libcurl's built-in write callback sends
+             ;; the response body to *stdout*, so a handle used without setting
+             ;; one would print the body to the terminal -- a surprising and
+             ;; occasionally disastrous default for a library.  With the
+             ;; trampoline in place and no closure, the body is discarded.
+             (%install-callback handle :write)
+             (%install-callback handle :header)
              (setf completed t)
              handle)
         ;; Do not leak the CURL* or a registry key if setup fails partway.
@@ -252,24 +260,27 @@ report results in terms of Lisp objects."
   (destructuring-bind (name function-option data-option trampoline)
       (find-callback-options slot)
     (declare (ignore name))
-    (let* ((state (handle-callbacks handle))
-           (function (funcall (callback-slot-accessor slot) state)))
-      (cond
-        (function
-         (%set-option handle data-option (callback-key-pointer (cb-key state)))
-         (%set-option handle function-option (cffi:get-callback trampoline)))
-        (t
-         ;; Clear *both*.  Nulling only the function pointer is not enough:
-         ;; after curl_easy_duphandle the data slot still holds the original's
-         ;; key, which dangles once that handle is closed.  But setting the data
-         ;; slot to our key instead would be worse, because a *DATA option with
-         ;; no function pointer is not inert -- CURLOPT_HEADERDATA on its own
-         ;; makes libcurl route the pseudo-headers of a file:// transfer into
-         ;; the *write* callback, so a duplicated handle would silently receive
-         ;; more bytes than the original.  Null is the documented default and
-         ;; the only value that means "as if never set".
-         (%set-option handle data-option (cffi:null-pointer))
-         (%set-option handle function-option (cffi:null-pointer)))))))
+    (let ((state (handle-callbacks handle)))
+      ;; Both options are always set, and the trampoline stays installed even
+      ;; when the closure is nil -- in which case it acts as a no-op sink: the
+      ;; write trampoline discards, the read one reports EOF.  Neither
+      ;; alternative works.
+      ;;
+      ;; Nulling the function pointer alone leaves the data slot holding a
+      ;; registry key, which dangles after curl_easy_duphandle if the original
+      ;; handle is closed first.
+      ;;
+      ;; Nulling the data slot as well hands libcurl's *built-in* callbacks a
+      ;; NULL where they expect a FILE*.  CURLOPT_READDATA set to NULL makes
+      ;; the default read function call fread on it, which segfaults; and
+      ;; CURLOPT_HEADERDATA set with no header function makes libcurl route
+      ;; headers into the write callback instead.  "Never set" and "set to
+      ;; NULL" are different states, and there is no value that is both safe
+      ;; and inert.
+      (%set-option handle data-option (callback-key-pointer (cb-key state)))
+      (%set-option handle function-option (cffi:get-callback trampoline))
+      (pushnew slot (cb-installed state))))
+  slot)
 
 (defun callback-function (handle slot)
   "The Lisp closure installed for SLOT, or NIL."
@@ -368,9 +379,11 @@ reset rather than close and reopen."
   (let ((state (handle-callbacks handle)))
     (setf (cb-condition state) nil
           (cb-condition-kind state) nil)
-    (%set-option handle :private (callback-key-pointer (cb-key state))))
-  (dolist (slot (callback-slot-names))
-    (when (callback-function handle slot)
+    (%set-option handle :private (callback-key-pointer (cb-key state)))
+    ;; Re-install by what was installed rather than by what has a closure: a
+    ;; slot whose closure was cleared still has our trampoline wired, and
+    ;; deliberately so.
+    (dolist (slot (reverse (cb-installed state)))
       (%install-callback handle slot)))
   handle)
 
@@ -402,9 +415,13 @@ the handle it came from."
         (dolist (slot (callback-slot-names))
           (setf (callback-slot state slot)
                 (funcall (callback-slot-accessor slot) (handle-callbacks handle))))
-        ;; ...then re-point every *DATA slot at this handle's own key.
+        ;; ...then re-point every installed slot at this handle's own key.
+        ;; Only the installed ones: wiring a trampoline into a slot the
+        ;; original never used would change behaviour, and some function
+        ;; options (CURLOPT_SSL_CTX_FUNCTION on a backend that has no SSL_CTX)
+        ;; are rejected outright by setopt.
         (%set-option copy :private (callback-key-pointer (cb-key state)))
-        (dolist (slot (callback-slot-names))
+        (dolist (slot (reverse (cb-installed (handle-callbacks handle))))
           (%install-callback copy slot)))
       (setf (slot-value copy 'error-buffer)
             (allocate-error-buffer (handle-resources copy)))

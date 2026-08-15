@@ -76,7 +76,18 @@
 (defconstant +curlhe-noheaders+ 3)
 (defconstant +curlhe-badindex+ 1)
 
-(defun response-header (handle name &key (index 0) (origin :header) (request -1))
+;;; Generic rather than plain functions so they can also be applied to a
+;;; RESPONSE object from the client layer, which carries headers captured at
+;;; the time of the transfer.  Asking a live handle and asking a finished
+;;; response are the same question, and should not be two spellings.
+(defgeneric response-header (source name &key &allow-other-keys)
+  (:documentation "The header called NAME from SOURCE, or NIL if there is none."))
+
+(defgeneric response-headers (source &key &allow-other-keys)
+  (:documentation "Every header from SOURCE, in order, including duplicates."))
+
+(defmethod response-header ((handle easy-handle) name
+                            &key (index 0) (origin :header) (request -1))
   "The response header called NAME, or NIL if there is none.
 
 INDEX selects among headers repeating that name.  REQUEST is which request in
@@ -99,14 +110,12 @@ case-insensitive, as HTTP requires."
                ;; is copied out rather than returned.
                (%decode-header pointer))))))))
 
-(defun response-header-value (handle name &key (index 0) (origin :header)
-                                               (request -1))
+(defun response-header-value (source name &rest arguments)
   "The value of a response header, or NIL."
-  (let ((header (response-header handle name :index index :origin origin
-                                             :request request)))
+  (let ((header (apply #'response-header source name arguments)))
     (when header (header-value header))))
 
-(defun response-headers (handle &key (origin :header) (request -1))
+(defmethod response-headers ((handle easy-handle) &key (origin :header) (request -1))
   "Every response header, in order, as a list of HTTP-HEADER structs.
 
 Duplicates are preserved: Set-Cookie appearing three times yields three
