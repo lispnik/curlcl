@@ -332,20 +332,58 @@ script relying on that would otherwise get silence."
            22)
           (t 0))))
 
-(defmacro with-output ((stream command url index) &body body)
-  "Bind STREAM to where this URL's body should go, closing it if it is a file."
-  (alexandria:with-gensyms (destination file)
-    `(let* ((,destination (output-destination ,command ,url ,index))
-            (,file ,destination))
-       (if ,file
-           (with-open-file (,stream ,file :direction :output
-                                          :element-type '(unsigned-byte 8)
-                                          :if-exists :supersede
-                                          :if-does-not-exist :create)
-             ,@body)
-           (let ((,stream (binary-stdout)))
-             (unwind-protect (progn ,@body)
-               (finish-output ,stream)))))))
+;;; The output sink -----------------------------------------------------------
+;;;
+;;; A retried transfer delivers its body from the beginning, so whatever has
+;;; already been written has to go.  The driver owns its destination outright --
+;;; it opened the file, or it is standard output -- which is what lets it say
+;;; :RETRY-STREAMED and mean it: on each retry it truncates the file by
+;;; reopening it, and the sinks pick up the new stream because they ask the
+;;; sink for it rather than closing over it.
+;;;
+;;; Standard output cannot be unwritten, and neither can curl's, so a retry
+;;; there repeats whatever the failed attempt printed.  That is curl's
+;;; behaviour and matching it is the point.
+
+(defstruct (output-sink (:conc-name sink-))
+  "Where one transfer's headers and body go, and how to start it over."
+  stream
+  ;; NIL when the destination is standard output, which must not be closed.
+  destination)
+
+(defun open-sink (destination)
+  (make-output-sink
+   :destination destination
+   :stream (if destination
+               (open destination :direction :output
+                                 :element-type '(unsigned-byte 8)
+                                 :if-exists :supersede
+                                 :if-does-not-exist :create)
+               (binary-stdout))))
+
+(defun reset-sink (sink)
+  "Discard what a failed attempt wrote, so the retry starts from nothing."
+  (when (sink-destination sink)
+    (close (sink-stream sink))
+    (setf (sink-stream sink)
+          (open (sink-destination sink) :direction :output
+                                        :element-type '(unsigned-byte 8)
+                                        :if-exists :supersede
+                                        :if-does-not-exist :create)))
+  sink)
+
+(defun close-sink (sink)
+  "Close a file sink, or flush standard output.  Errors propagate: a failure to
+flush loses data, and the exit code has to say so."
+  (if (sink-destination sink)
+      (close (sink-stream sink))
+      (finish-output (sink-stream sink))))
+
+(defmacro with-output ((sink command url index) &body body)
+  "Bind SINK to where this URL's output should go, closing it if it is a file."
+  `(let ((,sink (open-sink (output-destination ,command ,url ,index))))
+     (unwind-protect (progn ,@body)
+       (close-sink ,sink))))
 
 (defun parse-status-line (line)
   "The status code from an HTTP status line, or NIL if that is not one."
@@ -353,7 +391,7 @@ script relying on that would otherwise get silence."
     (let ((space (position #\Space line)))
       (when space (parse-integer line :start (1+ space) :junk-allowed t)))))
 
-(defun make-sinks (command stream)
+(defun make-sinks (command sink)
   "Header and body callbacks for one transfer.  Returns (values header data status).
 
 STATUS is a cons whose car tracks the most recent response code, so --fail can
@@ -379,10 +417,12 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
          (when (and include (not (suppressed-p)))
            (write-sequence (libcurl::coerce-to-octets
                             (format nil "~A~C~C" line #\Return #\Newline))
-                           stream)))
+                           ;; Asked for per write rather than closed over, so a
+                           ;; reset between attempts is picked up here.
+                           (sink-stream sink))))
        (lambda (octets)
          (unless (suppressed-p)
-           (write-sequence octets stream)))
+           (write-sequence octets (sink-stream sink))))
        status))))
 
 (defun progress-reporter (command)
@@ -407,17 +447,25 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
 (defun perform-one (command url index)
   "Fetch one URL.  Returns an exit code."
   (handler-case
-      (with-output (stream command url index)
+      (with-output (sink command url index)
         (let* ((options (request-options command))
                (effective-url (if (and (clingon:getopt command :get)
                                        (collect-data command))
                                   (append-query url (collect-data command))
                                   url))
                (progress (progress-reporter command)))
-          (multiple-value-bind (on-header on-data) (make-sinks command stream)
+          (multiple-value-bind (on-header on-data) (make-sinks command sink)
            (let ((response (apply #'libcurl:request effective-url
                                   :on-data on-data
                                   :on-header on-header
+                                  ;; The body is streamed, so the library
+                                  ;; refuses to retry it unless told the
+                                  ;; redelivery is handled.  It is: ON-RETRY
+                                  ;; throws away what the failed attempt wrote.
+                                  :retry-streamed t
+                                  :on-retry (lambda (attempt delay reason)
+                                              (declare (ignore attempt delay reason))
+                                              (reset-sink sink))
                                   (append
                                    (when progress (list :on-progress progress))
                                    options))))
@@ -431,28 +479,32 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
 
 (defun perform-parallel (command urls)
   "Fetch every URL at once, for --parallel.  Returns an exit code."
-  (let ((streams '())
+  (let ((sinks (make-array (length urls) :initial-element nil))
+        (open-p t)
         (worst 0))
     (unwind-protect
          (let ((requests
                  (loop for url in urls
                        for index from 0
-                       collect (let* ((destination (output-destination command url index))
-                                      (stream (if destination
-                                                  (open destination
-                                                        :direction :output
-                                                        :element-type '(unsigned-byte 8)
-                                                        :if-exists :supersede
-                                                        :if-does-not-exist :create)
-                                                  (binary-stdout))))
-                                 (push (cons stream (and destination t)) streams)
+                       collect (let ((sink (open-sink (output-destination
+                                                       command url index))))
+                                 (setf (aref sinks index) sink)
                                  (multiple-value-bind (on-header on-data)
-                                     (make-sinks command stream)
+                                     (make-sinks command sink)
                                    (list* url :on-data on-data
                                           :on-header on-header
+                                          :retry-streamed t
                                           (request-options command)))))))
            (loop for outcome in (libcurl:request-many
                                  requests
+                                 ;; The batch hook rather than a per-request
+                                 ;; one, because REQUEST-MANY reports retries
+                                 ;; batch-wide -- and it passes the index, which
+                                 ;; is exactly what says whose body is starting
+                                 ;; over while several are interleaved.
+                                 :on-retry (lambda (index attempt delay reason)
+                                             (declare (ignore attempt delay reason))
+                                             (reset-sink (aref sinks index)))
                                  :max-connections
                                  (or (clingon:getopt command :parallel-max) 8))
                  for url in urls
@@ -468,21 +520,21 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
            ;; rather than vanish into IGNORE-ERRORS.  The single-transfer path
            ;; gets this for free from WITH-OPEN-FILE, whose close error
            ;; propagates; this one has to do it by hand.
-           (dolist (entry streams)
-             (destructuring-bind (stream . ours) entry
-               (handler-case (progn (finish-output stream)
-                                    (when ours (close stream)))
-                 (error (condition)
-                   (unless (clingon:getopt command :silent)
-                     (message "~A" condition))
-                   ;; CURLE_WRITE_ERROR, as curl reports for a failed write.
-                   (setf worst 23)))))
-           (setf streams '())
+           (loop for sink across sinks
+                 when sink
+                   do (handler-case (close-sink sink)
+                        (error (condition)
+                          (unless (clingon:getopt command :silent)
+                            (message "~A" condition))
+                          ;; CURLE_WRITE_ERROR, as curl reports for a failed
+                          ;; write.
+                          (setf worst 23))))
+           (setf open-p nil)
            worst)
       ;; Only reached on a non-local exit; the normal path closed them above.
-      (dolist (entry streams)
-        (ignore-errors (finish-output (car entry)))
-        (when (cdr entry) (ignore-errors (close (car entry))))))))
+      (when open-p
+        (loop for sink across sinks
+              when sink do (ignore-errors (close-sink sink)))))))
 
 ;;; The command ---------------------------------------------------------------
 

@@ -366,3 +366,46 @@ gets it from the command line, so there is nothing to translate it for us."
   ;; An ordinary header is not a status line.
   (is (null (libcurl/cli::parse-status-line "Content-Type: text/plain")))
   (is (null (libcurl/cli::parse-status-line ""))))
+
+(test the-driver-truncates-its-output-file-between-retries
+  ;; curl -o file --retry, and the reason the driver says :RETRY-STREAMED and
+  ;; then resets its own sink.  /flaky answers the failing attempts with a body
+  ;; too, so a driver that kept writing to the same open file would leave
+  ;; "attempt 1 of 2 failing" in front of the real answer and exit 0.
+  (with-curlcl-or-skip
+    (reset-flaky "cli-retry-truncate")
+    (uiop:with-temporary-file (:pathname path)
+      (multiple-value-bind (output code)
+          (run-program-capturing
+           (native-namestring-of *curlcl-binary*)
+           (list "-s" "-o" (uiop:native-namestring path)
+                 "--retry" "5" "--retry-delay" "0"
+                 (test-url "/flaky?id=cli-retry-truncate&fail=2")))
+        (declare (ignore output))
+        (is (= 0 code))
+        (let ((written (file-contents path)))
+          (is (string= "succeeded on attempt 3" written)
+              "the file holds ~S, so a failed attempt's body survived"
+              written))))))
+
+(test the-driver-truncates-each-parallel-output-between-retries
+  ;; The same property under --parallel, where the retries of several
+  ;; transfers interleave and each has to reset only its own destination.
+  (with-curlcl-or-skip
+    (reset-flaky "cli-par-a")
+    (reset-flaky "cli-par-b")
+    (uiop:with-temporary-file (:pathname first-path)
+      (uiop:with-temporary-file (:pathname second-path)
+        (multiple-value-bind (output code)
+            (run-program-capturing
+             (native-namestring-of *curlcl-binary*)
+             (list "-s" "-Z"
+                   "-o" (uiop:native-namestring first-path)
+                   "-o" (uiop:native-namestring second-path)
+                   "--retry" "5" "--retry-delay" "0"
+                   (test-url "/flaky?id=cli-par-a&fail=1")
+                   (test-url "/flaky?id=cli-par-b&fail=2")))
+          (declare (ignore output))
+          (is (= 0 code))
+          (is (string= "succeeded on attempt 2" (file-contents first-path)))
+          (is (string= "succeeded on attempt 3" (file-contents second-path))))))))
