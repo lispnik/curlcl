@@ -346,8 +346,12 @@ Called as (FUNCTION timeout-ms), where NIL means \"cancel the timer\"."
                (multi-setopt multi :timerdata nil))))
   function)
 
-(defconstant +curl-socket-timeout+ -1
-  "The socket value meaning \"the timeout fired\" rather than a real socket.")
+(defconstant +curl-socket-timeout+ +curl-socket-bad+
+  "The socket value meaning \"the timeout fired\" rather than a real socket.
+
+CURL_SOCKET_TIMEOUT is defined as CURL_SOCKET_BAD, which is -1 on Unix and
+INVALID_SOCKET on Windows -- and on Win64 those are different bit patterns in a
+different width, so it has to follow the socket type rather than be spelled -1.")
 
 (defun socket-action (multi &key (socket +curl-socket-timeout+) events)
   "Tell libcurl that something happened on SOCKET.  Returns the running count.

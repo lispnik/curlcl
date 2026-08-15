@@ -143,6 +143,18 @@ jobs:
             --eval '(asdf:load-system :libcurl)' `
             --eval '(format t "~&libcurl ~A at ~A~%" (libcurl:libcurl-version) (libcurl:libcurl-pathname))'
 
+      # Same reason as the Unix jobs: the CLI suite runs the real binary and
+      # skips its end-to-end cases when there isn't one.
+      - name: Build the executable
+        shell: pwsh
+        run: |
+          sbcl --non-interactive `
+            --load "$env:USERPROFILE\AppData\Local\ocicl\ocicl-runtime.lisp" `
+            --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' `
+            --eval '(asdf:make :libcurl/cli)'
+          Get-ChildItem bin
+          & (Get-ChildItem bin\curlcl* | Select-Object -First 1).FullName -V
+
       - name: Run tests
         shell: pwsh
         run: |

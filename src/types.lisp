@@ -27,10 +27,26 @@
 ;;; wrong is not benign -- CURLOPT_*_LARGE options are passed variadically and a
 ;;; short write would leave libcurl reading half a value off the stack.
 (cffi:defctype curl-off-t :int64)
-(cffi:defctype curl-socket-t :int)
+
+;;; curl_socket_t is a plain file descriptor on Unix but a Win32 SOCKET --
+;;; UINT_PTR, so 8 bytes on 64-bit Windows -- everywhere else.  The difference
+;;; is not cosmetic: CURLINFO_ACTIVESOCKET writes sizeof(curl_socket_t) bytes
+;;; into the buffer we hand it, so a 4-byte declaration on Win64 scribbles over
+;;; the neighbouring word; curl_multi_socket_action and curl_multi_assign take
+;;; one by value, and half a SOCKET matches nothing libcurl has stored; and the
+;;; opensocket callback *returns* one, so a narrow return leaves the top half of
+;;; the register undefined.  It also decides the size of struct curl_waitfd,
+;;; which curl_multi_wait reads as an array.
+(cffi:defctype curl-socket-t #+(or windows win32 mswindows) :uintptr
+                             #-(or windows win32 mswindows) :int)
 (cffi:defctype curl-socklen-t :uint32)
 
-(defconstant +curl-socket-bad+ -1)
+;;; CURL_SOCKET_BAD is -1 on Unix and INVALID_SOCKET -- (SOCKET)~0, an unsigned
+;;; all-ones -- on Windows.  Spelled as the unsigned value there because that is
+;;; what the unsigned type compares equal to.
+(defconstant +curl-socket-bad+
+  #+(or windows win32 mswindows) (1- (ash 1 (* 8 (cffi:foreign-type-size :uintptr))))
+  #-(or windows win32 mswindows) -1)
 
 ;;; Result codes --------------------------------------------------------------
 
