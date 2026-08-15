@@ -1,0 +1,14 @@
+# Lisp sources must keep LF line endings on every platform.
+#
+# FORMAT's line-continuation directive is `~' followed by a *newline*.  With
+# CRLF the next character is a Return, which is not a directive at all, so
+# every format string that wraps across lines fails to compile -- and this
+# codebase has dozens.  Git on Windows converts to CRLF on checkout by
+# default, which is how the first Windows CI run died in src/conditions.lisp,
+# a file with no platform-specific code in it whatsoever.
+*.lisp text eol=lf
+*.asd  text eol=lf
+
+# Keep everything else the tests read byte-for-byte as committed.
+*.md   text eol=lf
+Makefile text eol=lf
