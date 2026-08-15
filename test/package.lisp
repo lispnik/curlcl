@@ -8,7 +8,8 @@
            #:all-tests
            ;; Suites.
            #:library #:types #:varargs #:tables #:callbacks #:easy
-           #:url #:headers #:mime #:share #:multi #:websockets #:client #:cli #:live))
+           #:url #:headers #:mime #:share #:multi #:websockets #:client #:cli
+           #:connection #:cookies #:live))
 
 (in-package #:libcurl/test)
 
@@ -67,6 +68,15 @@ value libcurl documents for that particular callback."
 (def-suite live
   :description "Tests that use the real network; skipped unless
 CURL_LIVE_TESTS is set."
+  :in all-tests)
+
+(def-suite connection
+  :description "Where a transfer goes: proxies, the local interface it binds,
+and how a name becomes an address."
+  :in all-tests)
+
+(def-suite cookies
+  :description "The cookie engine, including the jar as a file on disk."
   :in all-tests)
 
 (def-suite client

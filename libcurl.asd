@@ -141,6 +141,7 @@ convenient to expose."
                              (:file "varargs-tests")
                              (:file "tables-tests")
                              (:file "server")     ; in-process HTTP fixture
+                             (:file "proxy")      ; in-process HTTP proxy
                              (:file "callback-tests")
                              (:file "easy-tests")
                              (:file "url-tests")
@@ -150,6 +151,8 @@ convenient to expose."
                              (:file "multi-tests")
                              (:file "ws-server")  ; websocket echo fixture
                              (:file "ws-tests")
+                             (:file "connection-tests")
+                             (:file "cookie-tests")
                              (:file "client-tests")
                              (:file "cli-tests")  ; needs bin/curlcl for some
                              (:file "live-tests"))))   ; opt-in; needs network
