@@ -77,10 +77,12 @@ jobs:
             --eval '(asdf:load-system :libcurl/test)' \
             --eval '(uiop:quit (if (libcurl/test:run-tests) 0 1))'
 
-  # Exploratory.  The binding rests on cffi-libffi for its variadic calls, and
-  # that needs a libffi build and a C compiler for its grovel step -- which is
-  # the part of Windows support that is genuinely in doubt.  MSYS2 supplies
-  # gcc, libffi and libcurl; SBCL comes from Chocolatey.
+  # Windows runs the same suite as the Unix jobs.  It is a separate job rather
+  # than a matrix entry because everything around the tests differs: SBCL comes
+  # from Chocolatey, the C toolchain and libffi and libcurl from MSYS2, and the
+  # steps are PowerShell.  What it catches is real -- curl_socket_t is a
+  # different width here, standard output is a handle rather than a descriptor,
+  # and CRLF checkouts break FORMAT's line-continuation directive.
   windows:
     name: sbcl · windows-latest
     runs-on: windows-latest

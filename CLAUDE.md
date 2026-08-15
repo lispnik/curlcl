@@ -67,8 +67,29 @@ package → conditions → library → types → varargs → easy-raw → memory
   validation. `CURLOPT_HTTP_VERSION` accepts the sparse set `{0–5, 30, 31}`,
   answers the gaps with `CURLE_UNSUPPORTED_PROTOCOL` and negatives with
   `CURLE_BAD_FUNCTION_ARGUMENT` — three outcomes keyed on the exact integer.
+  Which of those values are *accepted* depends on whether the build has HTTP/2
+  and HTTP/3, so take the sets from the feature bits; hard-coding one machine's
+  answer breaks on Ubuntu (no HTTP/3) and Windows (neither).
   `CURLOPT_MAXFILESIZE_LARGE` set to `#x180000000` is positive as 64 bits and
   negative in its low 32, so a truncated argument is rejected.
+
+- **A test that asserts a width has to measure it, not restate it.**
+  `curl_socket_t` was declared `:int` and the test asserted 4; both were wrong
+  on Win64, where it is a `SOCKET` (`UINT_PTR`, 8 bytes), and they agreed with
+  each other so nothing failed. Where a width is really being checked, get it
+  from the platform (`(cffi:foreign-type-size :uintptr)`) or from libcurl —
+  poison a buffer, have libcurl write into it, and see how much changed.
+
+- **Windows is in CI, and three things about it are load-bearing.** C `long` is
+  4 bytes, not 8. `curl_socket_t` is 8, not 4, and `struct curl_waitfd` grows
+  with it. SBCL keeps an OS handle where Unix keeps a file descriptor, so
+  standard output is not descriptor 1 — ask `standard-descriptor`, never write
+  the number.
+
+- **Do not let a `.lisp` file be checked out with CRLF.** `FORMAT`'s
+  line-continuation directive is `~` followed by a *newline*; after a Return it
+  is not a directive at all, and every wrapped format string in the file fails
+  to compile. `.gitattributes` pins this and must stay.
 
 - **Conditions never unwind into C.** Every trampoline body runs inside
   `with-callback-guard`, which catches `serious-condition`, stashes it, and

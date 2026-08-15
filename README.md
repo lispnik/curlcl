@@ -285,7 +285,8 @@ HTTP/2, and connection reuse observed through timing.
 
 ## Implementations
 
-Developed and tested on SBCL, which is what CI runs on macOS and Linux.
+Developed and tested on SBCL, which is what CI runs on macOS, Linux and
+Windows.
 
 The library itself is close to portable: the only implementation-specific code
 is a bulk octet copy in `memory.lisp`, which has a portable fallback, and it
@@ -295,15 +296,42 @@ because the in-process test server spawns a thread per keep-alive connection
 and never reaps them — so ECL is **not** in the CI matrix and should be treated
 as unverified rather than supported.
 
-`bin/curlcl` needs a byte stream on file descriptors 0 and 1, which the
+`bin/curlcl` needs a byte stream on standard input and output, which the
 standard has no way to ask for. There are clauses for SBCL, ECL, CCL and CLISP,
-and a `/dev/fd` fallback for any other Unix implementation.
+and a `/dev/fd` fallback for any other Unix implementation. The descriptor
+comes from the implementation rather than being written as 0 or 1 — see
+`standard-descriptor` in `src/cli.lisp` for why that distinction is not
+academic.
 
-Windows is untested. Nothing here is knowingly Unix-only — the SBCL stdio
-clause works there, and `define-foreign-library` has a `:windows` clause for
-finding `libcurl.dll` — but that clause has never been executed, and
-`cffi-libffi` needs a libffi build, so treat Windows as unknown rather than
-supported.
+### Windows
+
+Supported on SBCL, in CI, with the same suite: 1207 checks pass, 16 skip. The
+skips are the websocket tests, because the libcurl the runner picks up is built
+without `ws://`.
+
+Four things had to be true for this to work, and three of them were broken when
+it was first tried:
+
+- **Line endings.** `FORMAT`'s continuation directive is `~` followed by a
+  *newline*; with CRLF the next character is a Return, which is not a directive,
+  and every format string that wraps stops compiling. `.gitattributes` pins
+  `*.lisp` and `*.asd` to LF.
+- **`curl_socket_t`.** A file descriptor on Unix, a Win32 `SOCKET` — `UINT_PTR`,
+  8 bytes — on Win64. Declaring it `:int` would have had
+  `CURLINFO_ACTIVESOCKET` write 8 bytes into 4, passed half a socket to
+  `curl_multi_socket_action`, and made `struct curl_waitfd` the wrong size for
+  `curl_multi_wait` to read as an array.
+- **Standard descriptors.** SBCL on Windows keeps an OS handle where Unix keeps
+  a descriptor, so `curlcl` could not write a response body until it stopped
+  assuming 1 meant standard output.
+- **`cffi-libffi`**, which needs a C toolchain and libffi. MSYS2's MinGW-w64
+  packages supply both; this was the part expected to be the obstacle, and it
+  was the one thing that worked first time.
+
+C `long` is 4 bytes on Windows and 8 on LP64 Unix. The binding passes CFFI's
+`:LONG`, which already tracks that, so nothing needed changing — but the test
+that claimed to check it had hard-coded 8, and now measures the width by asking
+libcurl to write a `CURLINFO_LONG` into a poisoned buffer instead.
 
 ## What is not bound, and why
 
