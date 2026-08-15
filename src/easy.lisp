@@ -475,3 +475,101 @@ not be valid text in any particular encoding."
           (error 'easy-error :message "curl_easy_unescape failed"))
         (unwind-protect (foreign-to-octets result (cffi:mem-ref out-length :int))
           (%curl-free result))))))
+
+;;; TLS session export --------------------------------------------------------
+;;;
+;;; libcurl 8.21.0 lets a TLS session ticket be exported and re-imported, so a
+;;; later process can resume rather than repeat a full handshake.  Resolved
+;;; rather than declared, since an older libcurl does not export the symbols.
+
+(defvar *ssls-import-function*
+  (cffi:foreign-symbol-pointer "curl_easy_ssls_import"))
+
+(defun tls-session-import-supported-p ()
+  (and *ssls-import-function* (not (cffi:null-pointer-p *ssls-import-function*))))
+
+(defun import-tls-session (handle session-key shmac sdata)
+  "Re-import a previously exported TLS session, so a handshake can be resumed.
+
+SHMAC and SDATA are the octet vectors that came out of the export callback,
+along with the session key that identifies them.  Requires libcurl 8.21.0."
+  (check-open handle)
+  (unless (tls-session-import-supported-p)
+    (error 'unsupported-feature
+           :name "curl_easy_ssls_import (libcurl 8.21.0 or newer)"
+           :message "This libcurl does not export curl_easy_ssls_import."))
+  (let ((shmac-octets (coerce-to-octets shmac))
+        (sdata-octets (coerce-to-octets sdata)))
+    (cffi:with-pointer-to-vector-data (shmac-pointer shmac-octets)
+      (cffi:with-pointer-to-vector-data (sdata-pointer sdata-octets)
+        (cffi:with-foreign-string (key session-key)
+          (%check-easy
+           (cffi:foreign-funcall-pointer
+            *ssls-import-function* ()
+            :pointer (handle-pointer handle)
+            :pointer key
+            :pointer shmac-pointer :size (length shmac-octets)
+            :pointer sdata-pointer :size (length sdata-octets)
+            :int))))))
+  handle)
+
+;;; TLS session export --------------------------------------------------------
+;;;
+;;; The other half of IMPORT-TLS-SESSION.  Note curl_ssls_export_cb is declared
+;;; as a function *type* rather than a pointer-to-function typedef, which is
+;;; unusual style but identical in ABI terms.
+
+(defvar *ssls-export-function*
+  (cffi:foreign-symbol-pointer "curl_easy_ssls_export"))
+
+(defun tls-session-export-supported-p ()
+  (and *ssls-export-function* (not (cffi:null-pointer-p *ssls-export-function*))))
+
+(cffi:defcallback %ssls-export-trampoline :int
+    ((handle :pointer) (userdata :pointer) (session-key :pointer)
+     (shmac :pointer) (shmac-length :size)
+     (sdata :pointer) (sdata-length :size)
+     (valid-until curl-off-t) (ietf-tls-id :int) (alpn :pointer)
+     (earlydata-max :size))
+  (declare (ignorable handle))
+  (let ((state (%lookup-state userdata)))
+    (if (null state)
+        (curlcode-value :bad-function-argument)
+        (with-callback-guard (state :ssls-export (curlcode-value :bad-function-argument))
+          (let ((function (cb-ssls-export state)))
+            (when function
+              (funcall function
+                       (unless (cffi:null-pointer-p session-key)
+                         (cffi:foreign-string-to-lisp session-key))
+                       (foreign-to-octets shmac shmac-length)
+                       (foreign-to-octets sdata sdata-length)
+                       (list :valid-until valid-until
+                             :ietf-tls-id ietf-tls-id
+                             :alpn (unless (cffi:null-pointer-p alpn)
+                                     (cffi:foreign-string-to-lisp alpn))
+                             :earlydata-max earlydata-max)))
+            0)))))
+
+(defun export-tls-sessions (handle function)
+  "Call FUNCTION for each resumable TLS session HANDLE holds.
+
+FUNCTION receives (session-key shmac sdata properties), where the first three
+are what IMPORT-TLS-SESSION needs to resume later and PROPERTIES is a plist of
+:VALID-UNTIL, :IETF-TLS-ID, :ALPN and :EARLYDATA-MAX.  Requires libcurl
+8.21.0."
+  (check-open handle)
+  (unless (tls-session-export-supported-p)
+    (error 'unsupported-feature
+           :name "curl_easy_ssls_export (libcurl 8.21.0 or newer)"
+           :message "This libcurl does not export curl_easy_ssls_export."))
+  (let ((state (handle-callbacks handle)))
+    (setf (cb-ssls-export state) function)
+    (unwind-protect
+         (%check-easy (cffi:foreign-funcall-pointer
+                       *ssls-export-function* ()
+                       :pointer (handle-pointer handle)
+                       :pointer (cffi:get-callback '%ssls-export-trampoline)
+                       :pointer (callback-key-pointer (cb-key state))
+                       :int))
+      (setf (cb-ssls-export state) nil)))
+  handle)

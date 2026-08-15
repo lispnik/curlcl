@@ -310,3 +310,94 @@ not be called while any handle is still alive or from a finalizer."
 
 (load-libcurl)
 (global-init)
+
+;;; Global utilities ----------------------------------------------------------
+
+(cffi:defcfun ("curl_getdate" %curl-getdate) :long
+  (date :string) (unused :pointer))
+
+(defconstant +unix-epoch-universal-time+
+  (encode-universal-time 0 0 0 1 1 1970 0)
+  "Universal time of the Unix epoch, for converting time_t results.")
+
+(defun parse-http-date (string)
+  "Parse an HTTP or RFC 822/1123/850 date into a universal time, or NIL.
+
+Uses libcurl's own parser, which accepts every format seen in the wild --
+including the asctime and RFC 850 forms that Date and Expires headers still
+turn up in."
+  (let ((seconds (%curl-getdate string (cffi:null-pointer))))
+    (unless (minusp seconds)
+      (+ seconds +unix-epoch-universal-time+))))
+
+(cffi:defcfun ("curl_global_trace" %curl-global-trace) :int (config :string))
+
+(defun global-trace (configuration)
+  "Configure libcurl's internal tracing, e.g. \"all\" or \"http/2,ssl\".
+
+Affects what a debug callback receives.  Best called before any transfer
+starts; libcurl documents it as thread-safe only when the THREADSAFE feature
+bit is set."
+  (let ((code (%curl-global-trace configuration)))
+    (unless (zerop code)
+      (error 'easy-error :code code :code-name (curlcode-keyword code)
+                         :message (%curl-easy-strerror code))))
+  t)
+
+(cffi:defcstruct curl-ssl-backend
+  (id :int)
+  (name :pointer))
+
+(cffi:defcfun ("curl_global_sslset" %curl-global-sslset) :int
+  (id :int) (name :string) (available :pointer))
+
+(defparameter *ssl-backends*
+  '((:none . 0) (:openssl . 1) (:gnutls . 2) (:nss . 3) (:obsolete4 . 4)
+    (:gskit . 5) (:polarssl . 6) (:wolfssl . 7) (:schannel . 8)
+    (:securetransport . 9) (:axtls . 10) (:mbedtls . 11) (:mesalink . 12)
+    (:bearssl . 13) (:rustls . 14))
+  "curl_sslbackend.  Explicit values: the enum is not sequential in meaning and
+several members are long deprecated.")
+
+(defun available-ssl-backends ()
+  "The TLS backends this libcurl was built with, as a list of (keyword . name).
+
+Only interesting for a multi-SSL build; an ordinary one reports the single
+backend it was compiled against."
+  (cffi:with-foreign-object (available :pointer)
+    (setf (cffi:mem-ref available :pointer) (cffi:null-pointer))
+    ;; -1 is CURLSSLBACKEND_NONE used as "just tell me what there is": the call
+    ;; reports CURLSSLSET_UNKNOWN_BACKEND but still fills in the list.
+    (%curl-global-sslset -1 (cffi:null-pointer) available)
+    (let ((array (cffi:mem-ref available :pointer)))
+      (unless (cffi:null-pointer-p array)
+        (loop for i from 0
+              for entry = (cffi:mem-aref array :pointer i)
+              until (cffi:null-pointer-p entry)
+              collect (let ((id (cffi:foreign-slot-value
+                                 entry '(:struct curl-ssl-backend) 'id))
+                            (name (cffi:foreign-slot-value
+                                   entry '(:struct curl-ssl-backend) 'name)))
+                        (cons (or (car (rassoc id *ssl-backends*)) id)
+                              (unless (cffi:null-pointer-p name)
+                                (cffi:foreign-string-to-lisp name)))))))))
+
+(defun select-ssl-backend (backend)
+  "Choose the TLS backend, for a libcurl built with more than one.
+
+Must run before GLOBAL-INIT -- which loading this system already did, so this
+is only usable from an image where GLOBAL-CLEANUP has been called.  Signals
+UNSUPPORTED-FEATURE if it is too late or the backend is unknown."
+  (let* ((id (or (cdr (assoc backend *ssl-backends*))
+                 (error 'curl-error
+                        :message (format nil "Unknown TLS backend ~S." backend))))
+         (code (%curl-global-sslset id (cffi:null-pointer) (cffi:null-pointer))))
+    (case code
+      (0 t)
+      (2 (error 'unsupported-feature
+                :name (format nil "selecting the ~S TLS backend" backend)
+                :message "curl_global_sslset was called too late; libcurl is
+already initialised."))
+      (t (error 'unsupported-feature
+                :name (format nil "the ~S TLS backend" backend)
+                :message "This libcurl was not built with that backend.")))))

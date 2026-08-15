@@ -252,3 +252,49 @@
       (multi-wakeup multi)
       (bt:join-thread thread)
       (is-true woken))))
+
+(test libcurl-agrees-about-which-handles-it-holds
+  ;; MULTI-TRANSFERS is the binding's own record; MULTI-HANDLES asks libcurl.
+  ;; They should not diverge.
+  (with-multi (multi)
+    (let ((handles (loop repeat 3 collect (make-collecting-handle "/ok"))))
+      (unwind-protect
+           (progn
+             (dolist (handle handles) (add-transfer multi handle))
+             (let ((reported (multi-handles multi)))
+               (is (= 3 (length reported)))
+               (is (null (set-difference reported (multi-transfers multi))))))
+        (dolist (handle handles) (close-handle handle))))))
+
+(test the-descriptors-libcurl-wants-watched-can-be-listed
+  ;; curl_multi_waitfds, the modern replacement for curl_multi_fdset -- no
+  ;; fd_set, so no FD_SETSIZE ceiling.
+  (with-multi (multi)
+    (let ((handle (make-collecting-handle "/drip?n=5&ms=30")))
+      (unwind-protect
+           (progn
+             (add-transfer multi handle)
+             (multi-perform multi)
+             (multi-poll multi :timeout-ms 200)
+             (multi-perform multi)
+             (let ((fds (multi-waitfds multi)))
+               (is (listp fds))
+               (dolist (entry fds)
+                 (is (integerp (car entry)))
+                 (is (listp (cdr entry))))))
+        (close-handle handle)))))
+
+(test multi-statistics-are-gated-on-the-libcurl-version
+  ;; curl_multi_get_offt arrived in 8.21.0.
+  (with-multi (multi)
+    (let ((handle (make-collecting-handle "/ok")))
+      (unwind-protect
+           (progn
+             (add-transfer multi handle)
+             (if (version-at-least-p 8 21)
+                 (progn
+                   (is (= 1 (multi-statistic multi :xfers-current)))
+                   (is (integerp (multi-statistic multi :xfers-added))))
+                 (signals unsupported-feature
+                   (multi-statistic multi :xfers-current))))
+        (close-handle handle)))))

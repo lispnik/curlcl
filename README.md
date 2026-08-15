@@ -229,6 +229,25 @@ HTTP/2, and connection reuse observed through timing.
   property of the loaded library. macOS ships the headers for a libcurl built
   without it. libcurl marks this API experimental; that caveat is passed on.
 
+## What is not bound, and why
+
+79 of the 100 `curl_*` symbols the library exports are bound. The rest are
+left out deliberately:
+
+| Not bound | Why |
+|---|---|
+| `curl_formadd`, `curl_formfree`, `curl_formget` | Deprecated on every enumerator since 7.56.0, and variadic with a sentinel-terminated option list. `curl_mime_*` replaces it. |
+| `curl_escape`, `curl_unescape` | Deprecated forms that take no handle; `curl_easy_escape` is bound. |
+| `curl_multi_socket`, `curl_multi_socket_all` | Deprecated; `curl_multi_socket_action` is bound. |
+| `curl_mprintf` and its nine relatives | Lisp has `format`. |
+| `curl_strequal`, `curl_strnequal`, `curl_getenv` | `string-equal` and `uiop:getenv`. |
+| `curl_global_init_mem` | Bindable, but a Lisp allocator called from libcurl's resolver threads is a GC-deadlock foothold. Left out rather than offered as a trap. |
+
+Version-gated functions — `curl_ws_start_frame`, `curl_multi_get_offt`,
+`curl_multi_notify_enable`/`disable`, `curl_easy_ssls_import`/`export` — are
+resolved at load time rather than declared, so an older libcurl reports the
+absence through `unsupported-feature` instead of failing at the first call.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

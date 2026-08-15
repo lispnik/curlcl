@@ -139,3 +139,63 @@ Each part is a plist of the keywords ADD-MIME-PART accepts:
       (apply #'add-mime-part mime part))
     (attach-mime handle mime)
     mime))
+
+;;; Streaming parts -----------------------------------------------------------
+;;;
+;;; curl_mime_data_cb takes a read callback, an optional seek callback, and one
+;;; userdata pointer shared between them.  A per-handle registry key will not do
+;;; here: a message can have several streaming parts, each needing its own
+;;; reader.  So each part gets a registry key of its own, holding a
+;;; CALLBACK-STATE whose read slot is that part's function -- which lets the
+;;; existing read trampoline serve it unchanged.  The key is recorded against
+;;; the handle and released with it.
+
+(cffi:defcfun ("curl_mime_data_cb" %curl-mime-data-cb) :int
+  (part :pointer) (datasize curl-off-t)
+  (read-function :pointer) (seek-function :pointer) (free-function :pointer)
+  (argument :pointer))
+
+(defun add-streaming-mime-part (mime &key name filename content-type encoding
+                                          headers size reader seeker)
+  "Add a part whose data comes from READER, called during the transfer.
+
+READER takes a maximum byte count and returns octets, a string, or :EOF, with
+the same contract as a read callback.  SIZE is the total size of the part; -1
+means unknown, which forces chunked encoding.  SEEKER, if given, takes an
+offset and a whence keyword and lets libcurl rewind the part for a redirect or
+an authentication retry.
+
+Streaming rather than buffering matters for a part that does not fit in memory
+or is not available yet; a part that is already in hand should use :DATA."
+  (let* ((state (make-callback-state))
+         (part (%curl-mime-addpart (mime-pointer mime))))
+    (when (cffi:null-pointer-p part)
+      (error 'easy-error :message "curl_mime_addpart returned NULL"))
+    (setf (cb-read state) reader
+          (cb-seek state) seeker
+          (cb-handle state) (mime-handle mime))
+    (register-callback-state state)
+    ;; Released when the handle is, alongside the mime itself.
+    (own-resource (handle-resources (mime-handle mime)) :callback-key
+                  (callback-key-pointer (cb-key state)))
+    (flet ((check (code) (%check-easy code)))
+      (when name (check (%curl-mime-name part name)))
+      (when filename (check (%curl-mime-filename part filename)))
+      (when content-type (check (%curl-mime-type part content-type)))
+      (when encoding (check (%curl-mime-encoder part encoding)))
+      (when headers
+        (check (%curl-mime-headers
+                part
+                (own-slist (handle-resources (mime-handle mime))
+                           (mapcar #'string headers))
+                0)))
+      (check (%curl-mime-data-cb
+              part
+              (or size -1)
+              (cffi:get-callback '%read-trampoline)
+              (if seeker (cffi:get-callback '%seek-trampoline) (cffi:null-pointer))
+              ;; No free callback: the state is owned by the handle, not by
+              ;; libcurl, and releasing it here would free it twice.
+              (cffi:null-pointer)
+              (callback-key-pointer (cb-key state)))))
+    part))

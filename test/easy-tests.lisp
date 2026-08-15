@@ -380,3 +380,70 @@
     (let ((escaped (url-escape handle "a b&c=d/e")))
       (is (string= "a%20b%26c%3Dd%2Fe" escaped))
       (is (string= "a b&c=d/e" (body-string (url-unescape handle escaped)))))))
+
+;;; The rest of the surface ---------------------------------------------------
+
+(test http-dates-are-parsed-by-libcurl
+  ;; libcurl's parser accepts every spelling seen in the wild, which is why it
+  ;; is worth binding rather than reimplementing: RFC 1123, RFC 850 and asctime
+  ;; all turn up in Date and Expires headers.
+  (let ((expected (encode-universal-time 0 28 7 21 10 2015 0)))
+    (is (= expected (parse-http-date "Wed, 21 Oct 2015 07:28:00 GMT")))
+    (is (= expected (parse-http-date "Wednesday, 21-Oct-15 07:28:00 GMT")))
+    (is (= expected (parse-http-date "Wed Oct 21 07:28:00 2015"))))
+  (is (null (parse-http-date "not a date at all"))))
+
+(test the-tls-backends-are-reported
+  (let ((backends (available-ssl-backends)))
+    (is (listp backends))
+    ;; Any libcurl worth using has at least one, and the loaded one must be
+    ;; consistent with what curl_version_info said.
+    (when backends
+      (is (every #'consp backends))
+      (is (every (lambda (entry) (or (keywordp (car entry)) (integerp (car entry))))
+                 backends)))))
+
+(test a-streaming-mime-part-is-read-during-the-transfer
+  ;; Each streaming part gets its own registry key, so several can coexist --
+  ;; a per-handle key could only serve one.
+  (with-easy (handle)
+    (let ((body (collect-body handle))
+          (first-remaining (libcurl::coerce-to-octets "streamed-one"))
+          (second-remaining (libcurl::coerce-to-octets "streamed-two")))
+      (setopt handle :url (test-url "/echo"))
+      (let ((mime (make-mime handle)))
+        (add-streaming-mime-part
+         mime :name "a" :size 12
+         :reader (lambda (capacity)
+                   (if (zerop (length first-remaining))
+                       :eof
+                       (let ((piece (subseq first-remaining
+                                            0 (min capacity (length first-remaining)))))
+                         (setf first-remaining (subseq first-remaining (length piece)))
+                         piece))))
+        (add-streaming-mime-part
+         mime :name "b" :size 12
+         :reader (lambda (capacity)
+                   (if (zerop (length second-remaining))
+                       :eof
+                       (let ((piece (subseq second-remaining
+                                            0 (min capacity (length second-remaining)))))
+                         (setf second-remaining (subseq second-remaining (length piece)))
+                         piece))))
+        (attach-mime handle mime))
+      (perform handle)
+      (let ((echoed (body-string (funcall body))))
+        (is (search "streamed-one" echoed))
+        (is (search "streamed-two" echoed)
+            "the second streaming part did not get its own reader")))))
+
+(test streaming-mime-keys-are-released-with-the-handle
+  (let ((before (libcurl::live-callback-count)))
+    (let ((handle (make-easy-handle)))
+      (let ((mime (make-mime handle)))
+        (add-streaming-mime-part mime :name "a" :reader (lambda (n) (declare (ignore n)) :eof))
+        (add-streaming-mime-part mime :name "b" :reader (lambda (n) (declare (ignore n)) :eof)))
+      ;; The handle's own key plus one per streaming part.
+      (is (= (+ before 3) (libcurl::live-callback-count)))
+      (close-handle handle))
+    (is (= before (libcurl::live-callback-count)))))

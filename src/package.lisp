@@ -28,6 +28,10 @@
    #:version-at-least-p
    #:global-init
    #:global-cleanup
+   #:global-trace
+   #:parse-http-date
+   #:available-ssl-backends
+   #:select-ssl-backend
 
    ;; Conditions.  Every failure path in the library ends in one of these;
    ;; no wrapper returns a bare CURLcode to the caller.
@@ -82,6 +86,10 @@
    #:resume-transfer
    #:url-escape
    #:url-unescape
+   #:import-tls-session
+   #:tls-session-import-supported-p
+   #:export-tls-sessions
+   #:tls-session-export-supported-p
 
    ;; Callbacks.  SETF of CALLBACK-FUNCTION installs a Lisp closure; the
    ;; contract for each slot is on that function's documentation.
@@ -134,6 +142,7 @@
    #:add-mime-part
    #:attach-mime
    #:set-mime-body
+   #:add-streaming-mime-part
 
    ;; Shared cookies, DNS, TLS sessions and connections.  Lock callbacks are
    ;; always installed, so a share is safe across threads.
@@ -177,6 +186,16 @@
    #:multi-socket-function
    #:multi-timer-function
    #:socket-action
+   #:multi-handles
+   #:multi-waitfds
+   #:assign-socket-data
+   #:multi-push-function
+   #:push-header
+   #:multi-statistic
+   #:multi-notify-function
+   #:enable-multi-notification
+   #:disable-multi-notification
+   #:multi-notifications-supported-p
 
    ;; Websockets.  Feature-gated at runtime: macOS ships the headers for a
    ;; libcurl built without ws/wss, so the symbols resolve and then fail at

@@ -114,12 +114,19 @@ that one is an instruction, not an estimate."
 (defun parse-retry-after (value)
   "Seconds from a Retry-After header value, or NIL.
 
-The header may be a delay in seconds or an HTTP date; only the numeric form is
-honoured, because the date form needs a clock agreement that is rarely worth
-trusting for a backoff decision."
+The header may be a delay in seconds or an HTTP date, and both are honoured:
+the date form goes through libcurl's own parser, which accepts every spelling
+seen in the wild.  A date already past yields 0 rather than a negative delay,
+since the two clocks need not agree and a server saying \"now\" is the sensible
+reading."
   (when value
-    (let ((seconds (parse-integer (string-trim " " value) :junk-allowed t)))
-      (when (and seconds (<= 0 seconds)) seconds))))
+    (let* ((trimmed (string-trim " " value))
+           (seconds (parse-integer trimmed :junk-allowed t)))
+      (cond ((and seconds (<= 0 seconds)) seconds)
+            (seconds 0)                 ; a negative delay means "now"
+            (t (let ((universal (parse-http-date trimmed)))
+                 (when universal
+                   (max 0 (- universal (get-universal-time))))))))))
 
 (defun response-retry-after (response)
   (parse-retry-after (response-header-value response "retry-after")))

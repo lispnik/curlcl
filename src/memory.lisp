@@ -110,7 +110,12 @@ still be reading the very buffers being freed here."
                    (cffi:foreign-free pointer))
           ;; A curl_mime must be freed after curl_easy_cleanup, which is
           ;; exactly when this sweep runs.
-          ((:mime) (%curl-mime-free pointer))))))
+          ((:mime) (%curl-mime-free pointer))
+          ;; A registry key minted for a streaming mime part.  Not foreign
+          ;; memory at all -- the "pointer" is the key itself -- but it belongs
+          ;; to the handle and is released on the same schedule.
+          ((:callback-key) (release-callback-state
+                            (cffi:pointer-address pointer)))))))
   (setf (resources-items resources) '())
   (values))
 

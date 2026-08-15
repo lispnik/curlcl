@@ -42,9 +42,6 @@
   (multi :pointer) (timeout :pointer))
 (cffi:defcfun ("curl_multi_socket_action" %curl-multi-socket-action) :int
   (multi :pointer) (socket curl-socket-t) (events :int) (running :pointer))
-(cffi:defcfun ("curl_multi_assign" %curl-multi-assign) :int
-  (multi :pointer) (socket curl-socket-t) (data :pointer))
-
 (defclass multi-handle ()
   ((pointer :initarg :pointer :reader multi-pointer)
    (callbacks :reader multi-callbacks :initform nil)
@@ -357,3 +354,223 @@ timeout, which is what an expired timer should do."
       (%check-multi (%curl-multi-socket-action (multi-pointer multi) socket mask
                                                running)))
     (cffi:mem-ref running :int)))
+
+;;; The rest of the multi surface ---------------------------------------------
+
+(cffi:defcfun ("curl_multi_get_handles" %curl-multi-get-handles) :pointer
+  (multi :pointer))
+(cffi:defcfun ("curl_multi_waitfds" %curl-multi-waitfds) :int
+  (multi :pointer) (ufds :pointer) (size :unsigned-int) (count :pointer))
+(cffi:defcfun ("curl_multi_fdset" %curl-multi-fdset) :int
+  (multi :pointer) (read-set :pointer) (write-set :pointer)
+  (exception-set :pointer) (max-fd :pointer))
+(cffi:defcfun ("curl_multi_assign" %curl-multi-assign) :int
+  (multi :pointer) (socket curl-socket-t) (data :pointer))
+(cffi:defcfun ("curl_pushheader_bynum" %curl-pushheader-bynum) :pointer
+  (headers :pointer) (index :size))
+(cffi:defcfun ("curl_pushheader_byname" %curl-pushheader-byname) :pointer
+  (headers :pointer) (name :string))
+
+(defun multi-handles (multi)
+  "Every easy handle libcurl currently holds, asked of libcurl rather than us.
+
+Useful as a cross-check on MULTI-TRANSFERS, which is the binding's own record.
+The array libcurl returns is its allocation and is released here with
+curl_free, not the C library's free."
+  (let ((array (%curl-multi-get-handles (multi-pointer multi))))
+    (if (cffi:null-pointer-p array)
+        '()
+        (unwind-protect
+             (loop for i from 0
+                   for pointer = (cffi:mem-aref array :pointer i)
+                   until (cffi:null-pointer-p pointer)
+                   collect (or (handle-from-pointer pointer) pointer))
+          (%curl-free array)))))
+
+(defun multi-waitfds (multi &key (limit 64))
+  "The descriptors libcurl wants watched, as a list of (fd . events).
+
+The modern replacement for curl_multi_fdset: no fd_set, so no FD_SETSIZE
+ceiling.  EVENTS is a list of :IN, :OUT and :PRIORITY."
+  (cffi:with-foreign-object (fds '(:struct curl-waitfd) limit)
+    (cffi:with-foreign-object (count :unsigned-int)
+      (setf (cffi:mem-ref count :unsigned-int) 0)
+      (%check-multi (%curl-multi-waitfds (multi-pointer multi) fds limit count))
+      (loop for i below (min limit (cffi:mem-ref count :unsigned-int))
+            for entry = (cffi:mem-aptr fds '(:struct curl-waitfd) i)
+            collect (cons (cffi:foreign-slot-value entry '(:struct curl-waitfd) 'fd)
+                          (let ((events (cffi:foreign-slot-value
+                                         entry '(:struct curl-waitfd) 'events))
+                                (names '()))
+                            (when (logtest events +curl-wait-pollin+)
+                              (push :in names))
+                            (when (logtest events +curl-wait-pollout+)
+                              (push :out names))
+                            (when (logtest events +curl-wait-pollpri+)
+                              (push :priority names))
+                            names))))))
+
+(defun assign-socket-data (multi socket pointer)
+  "Attach POINTER to SOCKET, to come back as the socket callback's last argument."
+  (%check-multi (%curl-multi-assign (multi-pointer multi) socket pointer))
+  multi)
+
+;;; Server push ---------------------------------------------------------------
+;;;
+;;; HTTP/2 lets a server push a response the client did not ask for.  The
+;;; callback decides whether to take it; taking it means libcurl creates a new
+;;; easy handle, which the callback must configure before returning.
+
+(define-trampoline %push-trampoline :int
+    ((parent :pointer) (easy :pointer) (header-count :size)
+     (headers :pointer) (userdata :pointer))
+    (:state-var state :userdata userdata :kind :push :failure +curl-push-errorout+)
+  (let ((function (cb-push state)))
+    (if (null function)
+        +curl-push-deny+
+        (let ((result (funcall function
+                               (handle-from-pointer parent)
+                               easy
+                               (loop for i below header-count
+                                     for line = (%curl-pushheader-bynum headers i)
+                                     unless (cffi:null-pointer-p line)
+                                       collect (cffi:foreign-string-to-lisp line)))))
+          (case result
+            ((nil :deny) +curl-push-deny+)
+            ((:error) +curl-push-errorout+)
+            (t +curl-push-ok+))))))
+
+(defun (setf multi-push-function) (function multi)
+  "Install the HTTP/2 server-push callback.
+
+Called as (FUNCTION parent-handle pushed-curl-pointer header-lines); return
+:DENY or NIL to refuse the push, anything else to accept it.  Accepting means
+libcurl keeps the new handle, and its result arrives through the ordinary
+message queue."
+  (let ((state (multi-callbacks multi)))
+    (setf (cb-push state) function)
+    (if function
+        (progn (multi-setopt multi :pushfunction
+                             (cffi:get-callback '%push-trampoline))
+               (multi-setopt multi :pushdata (callback-key-pointer (cb-key state))))
+        (progn (multi-setopt multi :pushfunction nil)
+               (multi-setopt multi :pushdata nil))))
+  function)
+
+(defun push-header (headers name)
+  "A pushed request's header by name, from inside the push callback."
+  (let ((line (%curl-pushheader-byname headers name)))
+    (unless (cffi:null-pointer-p line)
+      (cffi:foreign-string-to-lisp line))))
+
+;;; 8.21.0 additions ----------------------------------------------------------
+;;;
+;;; Resolved rather than declared, so an older libcurl reports the absence
+;;; instead of failing at the first call.
+
+(defvar *multi-get-offt-function*
+  (cffi:foreign-symbol-pointer "curl_multi_get_offt"))
+
+(defparameter *multi-offt-infos*
+  '((:xfers-current . 1) (:xfers-running . 2) (:xfers-pending . 3)
+    (:xfers-done . 4) (:xfers-added . 5)))
+
+(defun multi-statistic (multi info)
+  "A counter from curl_multi_get_offt: :XFERS-CURRENT, :XFERS-RUNNING,
+:XFERS-PENDING, :XFERS-DONE or :XFERS-ADDED.
+
+Requires libcurl 8.21.0 or newer."
+  (unless (and *multi-get-offt-function*
+               (not (cffi:null-pointer-p *multi-get-offt-function*)))
+    (error 'unsupported-feature
+           :name "curl_multi_get_offt (libcurl 8.21.0 or newer)"
+           :message "This libcurl does not export curl_multi_get_offt."))
+  (let ((id (or (cdr (assoc info *multi-offt-infos*))
+                (error 'curl-error
+                       :message (format nil "Unknown multi statistic ~S." info)))))
+    (cffi:with-foreign-object (value 'curl-off-t)
+      (setf (cffi:mem-ref value 'curl-off-t) 0)
+      (%check-multi (cffi:foreign-funcall-pointer
+                     *multi-get-offt-function* ()
+                     :pointer (multi-pointer multi) :int id :pointer value :int))
+      (cffi:mem-ref value 'curl-off-t))))
+
+;;; Completion notifications (8.21.0) -----------------------------------------
+;;;
+;;; A callback fired when a transfer finishes or a message is queued, so an
+;;; event loop need not poll curl_multi_info_read.  Enabled per notification
+;;; kind, and resolved rather than declared since older libcurls lack it.
+
+(defvar *multi-notify-enable-function*
+  (cffi:foreign-symbol-pointer "curl_multi_notify_enable"))
+(defvar *multi-notify-disable-function*
+  (cffi:foreign-symbol-pointer "curl_multi_notify_disable"))
+
+(defparameter *multi-notifications*
+  '((:info-read . 0) (:easy-done . 1)))
+
+(defun multi-notifications-supported-p ()
+  (and *multi-notify-enable-function*
+       (not (cffi:null-pointer-p *multi-notify-enable-function*))))
+
+(define-trampoline %notify-trampoline :void
+    ((multi :pointer) (notification :unsigned-int) (easy :pointer)
+     (userdata :pointer))
+    (:state-var state :userdata userdata :kind :notify :failure (values))
+  ;; No DECLARE here: DEFINE-TRAMPOLINE splices this body inside a handler, and
+  ;; it already declares every argument ignorable.
+  (let ((function (cb-notify state)))
+    (when function
+      (funcall function
+               (or (car (rassoc notification *multi-notifications*)) notification)
+               (unless (cffi:null-pointer-p easy) (handle-from-pointer easy))))
+    (values)))
+
+(defun (setf multi-notify-function) (function multi)
+  "Install the completion-notification callback.
+
+Called as (FUNCTION notification easy-handle), where NOTIFICATION is
+:INFO-READ or :EASY-DONE.  Requires libcurl 8.21.0, and the notifications
+wanted must also be enabled with ENABLE-MULTI-NOTIFICATION."
+  (unless (multi-notifications-supported-p)
+    (error 'unsupported-feature
+           :name "curl_multi_notify_enable (libcurl 8.21.0 or newer)"
+           :message "This libcurl has no multi notification callback."))
+  (let ((state (multi-callbacks multi)))
+    (setf (cb-notify state) function)
+    (if function
+        (progn (multi-setopt multi :notifyfunction
+                             (cffi:get-callback '%notify-trampoline))
+               (multi-setopt multi :notifydata (callback-key-pointer (cb-key state))))
+        (progn (multi-setopt multi :notifyfunction nil)
+               (multi-setopt multi :notifydata nil))))
+  function)
+
+(defun %notification-value (notification)
+  (or (cdr (assoc notification *multi-notifications*))
+      (error 'curl-error
+             :message (format nil "Unknown notification ~S." notification))))
+
+(defun enable-multi-notification (multi notification)
+  "Ask libcurl to fire the notify callback for NOTIFICATION."
+  (unless (multi-notifications-supported-p)
+    (error 'unsupported-feature
+           :name "curl_multi_notify_enable (libcurl 8.21.0 or newer)"
+           :message "This libcurl has no multi notifications."))
+  (%check-multi (cffi:foreign-funcall-pointer
+                 *multi-notify-enable-function* ()
+                 :pointer (multi-pointer multi)
+                 :unsigned-int (%notification-value notification) :int))
+  multi)
+
+(defun disable-multi-notification (multi notification)
+  "Stop firing the notify callback for NOTIFICATION."
+  (unless (multi-notifications-supported-p)
+    (error 'unsupported-feature
+           :name "curl_multi_notify_disable (libcurl 8.21.0 or newer)"
+           :message "This libcurl has no multi notifications."))
+  (%check-multi (cffi:foreign-funcall-pointer
+                 *multi-notify-disable-function* ()
+                 :pointer (multi-pointer multi)
+                 :unsigned-int (%notification-value notification) :int))
+  multi)

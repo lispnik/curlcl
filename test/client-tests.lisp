@@ -317,9 +317,21 @@
     (is (= 2 (libcurl::retry-delay policy 1 :retry-after 2))))
   (is (= 5 (libcurl::parse-retry-after "5")))
   (is (= 0 (libcurl::parse-retry-after "0")))
-  ;; The HTTP-date form is not honoured; it needs a clock agreement that is
-  ;; rarely worth trusting for a backoff decision.
-  (is (null (libcurl::parse-retry-after "Wed, 21 Oct 2015 07:28:00 GMT"))))
+  (is (null (libcurl::parse-retry-after "nonsense")))
+  ;; The HTTP-date form is honoured too, through libcurl's own date parser.
+  ;; A date already past yields 0 rather than a negative delay: the two clocks
+  ;; need not agree, and a server saying "now" is the sensible reading.
+  (is (= 0 (libcurl::parse-retry-after "Wed, 21 Oct 2015 07:28:00 GMT")))
+  (let ((soon (libcurl::parse-retry-after
+               (multiple-value-bind (second minute hour day month year)
+                   (decode-universal-time (+ (get-universal-time) 120) 0)
+                 (format nil "~A, ~2,'0D ~A ~D ~2,'0D:~2,'0D:~2,'0D GMT"
+                         "Mon" day
+                         (aref #("Jan" "Feb" "Mar" "Apr" "May" "Jun" "Jul"
+                                 "Aug" "Sep" "Oct" "Nov" "Dec") (1- month))
+                         year hour minute second)))))
+    (is (and soon (<= 110 soon 130))
+        "a date two minutes out gave ~S seconds" soon)))
 
 (test retry-specifications-are-accepted-in-several-shapes
   (is (= 1 (libcurl::retry-max-attempts (make-retry nil))))
