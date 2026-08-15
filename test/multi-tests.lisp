@@ -213,18 +213,23 @@
              (setf (multi-timer-function multi)
                    (lambda (timeout-ms) (push timeout-ms timer-requests)))
              (add-transfer multi handle)
-             ;; Kick things off the way an event loop would, on the first timer.
+             ;; Kick things off the way an event loop would, on the first timer,
+             ;; then keep feeding libcurl both socket events and timeouts until
+             ;; it says nothing is running.  A real event loop would wait on the
+             ;; sockets and the timer instead of spinning; this drives both
+             ;; unconditionally so the test does not depend on which one libcurl
+             ;; happens to be waiting for.
              (let ((running (socket-action multi)))
-               (loop repeat 200
+               (loop repeat 3000
                      while (plusp running)
-                     do (let ((watched (loop for socket being the hash-keys of sockets
-                                             collect socket)))
-                          (if (null watched)
-                              (setf running (socket-action multi))
-                              (dolist (socket watched)
-                                (setf running
-                                      (socket-action multi :socket socket
-                                                           :events '(:in :out))))))))
+                     do (dolist (socket (loop for socket being the hash-keys of sockets
+                                              collect socket))
+                          (setf running (socket-action multi :socket socket
+                                                             :events '(:in :out))))
+                        (when (plusp running)
+                          (setf running (socket-action multi)))
+                        (sleep 0.001))
+               (is (zerop running) "the transfer did not finish via socket-action"))
              (is (plusp (length timer-requests))
                  "libcurl never asked for a timer")
              (let ((results (read-multi-messages multi)))

@@ -98,14 +98,21 @@ of their behaviour.  Any other method is passed through verbatim."
        (setopt handle :customrequest (string-upcase (string method)))))
   method)
 
-(defun apply-content (handle content multipart)
+(defun apply-content (handle content multipart method)
   "Attach a request body.  Returns the Content-Type it implies, or NIL.
 
 CONTENT may be a string or octets (sent as-is), or an alist (form-encoded).
-MULTIPART is a list of part plists and goes through curl_mime."
+MULTIPART is a list of part plists and goes through curl_mime.
+
+A POST with no body still needs one declared.  CURLOPT_POST tells libcurl to
+expect a request body, and with no size and no read callback it goes looking
+for one -- historically on stdin.  An explicit empty body makes it send
+Content-Length: 0 and move on."
   (cond
     (multipart (set-mime-body handle multipart) nil)
-    ((null content) nil)
+    ((null content)
+     (when (eq method :post) (setopt handle :postfields ""))
+     nil)
     ((or (stringp content) (typep content '(array (unsigned-byte 8) (*))))
      (setopt handle :postfields content)
      nil)
@@ -156,7 +163,7 @@ accumulated, which is what makes a large download not have to fit in memory."
   "Apply every request option to HANDLE.  Returns the body-collecting closure."
   (setopt handle :url url)
   (apply-method handle method)
-  (let ((implied-type (apply-content handle content multipart))
+  (let ((implied-type (apply-content handle content multipart method))
         (header-lines (normalise-headers headers)))
     ;; A Content-Type implied by the body is only added when the caller did not
     ;; set one; theirs wins.

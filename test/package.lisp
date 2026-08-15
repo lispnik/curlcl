@@ -8,7 +8,7 @@
            #:all-tests
            ;; Suites.
            #:library #:types #:varargs #:tables #:easy
-           #:url #:headers #:mime #:share #:multi #:websockets #:client))
+           #:url #:headers #:mime #:share #:multi #:websockets #:client #:live))
 
 (in-package #:libcurl/test)
 
@@ -53,6 +53,11 @@
 
 (def-suite multi
   :description "Many transfers on one thread."
+  :in all-tests)
+
+(def-suite live
+  :description "Tests that use the real network; skipped unless
+CURL_LIVE_TESTS is set."
   :in all-tests)
 
 (def-suite client

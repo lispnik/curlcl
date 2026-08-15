@@ -2,10 +2,13 @@
 ;;;;
 ;;;; Three systems.  #:libcurl is the binding and the HTTP client built on it.
 ;;;; #:libcurl/generator is a build-time tool that parses the installed curl
-;;;; headers and emits src/options.lisp and src/infos.lisp; those files are
-;;;; committed, so the generator is never needed to build or use the library.
-;;;; #:libcurl/test is the FiveAM suite, which additionally runs an in-process
-;;;; HTTP server so the integration tests never touch the network.
+;;;; headers and emits src/options-table.lisp and src/infos-table.lisp; those
+;;;; files are committed, so the generator is never needed to build or use the
+;;;; library, and it deliberately does not depend on #:libcurl.
+;;;; #:libcurl/test is the FiveAM suite.  It runs an HTTP server and a
+;;;; websocket echo server inside the image, so the integration tests are
+;;;; hermetic; the one suite that uses the real network is skipped unless
+;;;; CURL_LIVE_TESTS is set.
 
 (asdf:defsystem #:libcurl
   :description "A comprehensive, idiomatic Common Lisp binding to libcurl."
@@ -115,7 +118,8 @@ generic CURLE_WRITE_ERROR."
                              (:file "multi-tests")
                              (:file "ws-server")  ; websocket echo fixture
                              (:file "ws-tests")
-                             (:file "client-tests"))))
+                             (:file "client-tests")
+                             (:file "live-tests"))))   ; opt-in; needs network
   ;; ASDF ignores whatever a TEST-OP perform method returns, so reporting
   ;; failure by returning NIL would leave `asdf:test-system' -- and therefore
   ;; CI -- green on a suite that failed.  Signal.

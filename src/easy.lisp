@@ -109,6 +109,12 @@ libcurl might call into it, which would keep the handle alive anyway."
              ;; trampoline in place and no closure, the body is discarded.
              (%install-callback handle :write)
              (%install-callback handle :header)
+             ;; The read side is worse than startling: libcurl's built-in read
+             ;; callback is fread on CURLOPT_READDATA, which defaults to
+             ;; *stdin*.  An upload with no read callback set therefore blocks
+             ;; on the terminal, or crashes when stdin is not a usable stream.
+             ;; With the trampoline in place and no closure it reports EOF.
+             (%install-callback handle :read)
              (setf completed t)
              handle)
         ;; Do not leak the CURL* or a registry key if setup fails partway.
