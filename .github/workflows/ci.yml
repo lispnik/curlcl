@@ -4,6 +4,9 @@ on:
   push:
     branches: [master]
   pull_request:
+  # So a run can be started without a commit -- useful when a run fails before
+  # it starts any jobs, which cannot be retried through the API.
+  workflow_dispatch:
 
 jobs:
   test:
