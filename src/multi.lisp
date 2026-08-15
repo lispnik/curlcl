@@ -370,8 +370,6 @@ timeout, which is what an expired timer should do."
 
 (cffi:defcfun ("curl_multi_get_handles" %curl-multi-get-handles) :pointer
   (multi :pointer))
-(cffi:defcfun ("curl_multi_waitfds" %curl-multi-waitfds) :int
-  (multi :pointer) (ufds :pointer) (size :unsigned-int) (count :pointer))
 (cffi:defcfun ("curl_multi_fdset" %curl-multi-fdset) :int
   (multi :pointer) (read-set :pointer) (write-set :pointer)
   (exception-set :pointer) (max-fd :pointer))
@@ -398,15 +396,35 @@ curl_free, not the C library's free."
                    collect (or (handle-from-pointer pointer) pointer))
           (%curl-free array)))))
 
+(defvar *multi-waitfds-function*
+  (cffi:foreign-symbol-pointer "curl_multi_waitfds")
+  "Resolved rather than declared: curl_multi_waitfds is absent from libcurls
+still in wide use -- Ubuntu 24.04's 8.5.0 among them -- and a DEFCFUN against a
+missing symbol fails with an undefined-alien error at the first call instead of
+being reportable up front.")
+
+(defun multi-waitfds-supported-p ()
+  (and *multi-waitfds-function*
+       (not (cffi:null-pointer-p *multi-waitfds-function*))))
+
 (defun multi-waitfds (multi &key (limit 64))
   "The descriptors libcurl wants watched, as a list of (fd . events).
 
 The modern replacement for curl_multi_fdset: no fd_set, so no FD_SETSIZE
-ceiling.  EVENTS is a list of :IN, :OUT and :PRIORITY."
+ceiling.  EVENTS is a list of :IN, :OUT and :PRIORITY.
+
+Not present in every libcurl; signals UNSUPPORTED-FEATURE where it is missing."
+  (unless (multi-waitfds-supported-p)
+    (error 'unsupported-feature
+           :name "curl_multi_waitfds"
+           :message "This libcurl does not export curl_multi_waitfds."))
   (cffi:with-foreign-object (fds '(:struct curl-waitfd) limit)
     (cffi:with-foreign-object (count :unsigned-int)
       (setf (cffi:mem-ref count :unsigned-int) 0)
-      (%check-multi (%curl-multi-waitfds (multi-pointer multi) fds limit count))
+      (%check-multi (cffi:foreign-funcall-pointer
+                     *multi-waitfds-function* ()
+                     :pointer (multi-pointer multi) :pointer fds
+                     :unsigned-int limit :pointer count :int))
       (loop for i below (min limit (cffi:mem-ref count :unsigned-int))
             for entry = (cffi:mem-aptr fds '(:struct curl-waitfd) i)
             collect (cons (cffi:foreign-slot-value entry '(:struct curl-waitfd) 'fd)

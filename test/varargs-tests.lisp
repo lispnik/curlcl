@@ -42,10 +42,16 @@
   ;; setopt offers: an argument read from the wrong place cannot sort itself
   ;; into a scattered eight-element set and two distinct error classes.
   (with-raw-handle (h)
-    (dolist (accepted '(0 1 2 3 4 5 30 31))
+    ;; 30 and 31 are the HTTP/3 constants, and a libcurl built without HTTP/3
+    ;; rejects them -- Ubuntu's does.  What the test is really about is the
+    ;; sparse pattern, so the set is taken from what this build supports rather
+    ;; than hard-coded from one machine's.
+    (dolist (accepted (append '(0 1 2 3 4 5)
+                              (when (feature-supported-p :http3) '(30 31))))
       (is (eq :ok (curlcode-keyword (libcurl::%setopt-long h +opt-http-version+ accepted)))
           "CURLOPT_HTTP_VERSION ~D should be accepted" accepted))
-    (dolist (rejected '(6 7 20 29 32 40 99))
+    (dolist (rejected (append '(6 7 20 29 32 40 99)
+                              (unless (feature-supported-p :http3) '(30 31))))
       (is (eq :unsupported-protocol
               (curlcode-keyword (libcurl::%setopt-long h +opt-http-version+ rejected)))
           "CURLOPT_HTTP_VERSION ~D should be rejected as unsupported" rejected))

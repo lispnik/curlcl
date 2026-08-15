@@ -111,6 +111,7 @@ TYPE is :TEXT, :BINARY, :PING, :PONG or :CLOSE.  FRAGMENT-SIZE is non-zero only
 when sending a frame in pieces, in which case it is the total size of the frame
 being assembled."
   (check-open handle)
+  (ensure-websockets)
   (let* ((octets (coerce-to-octets data))
          (length (length octets))
          (bits (logior (ws-flags-value type) (ws-flags-value flags))))
@@ -134,6 +135,7 @@ yet -- libcurl answers CURLE_AGAIN for a non-blocking read with no data, which
 is a normal state rather than a failure.  A frame larger than BUFFER-SIZE
 arrives over several calls; FRAME-BYTES-LEFT says how much of it remains."
   (check-open handle)
+  (ensure-websockets)
   (cffi:with-foreign-object (received :size)
     (cffi:with-foreign-object (meta :pointer)
       (setf (cffi:mem-ref received :size) 0
@@ -153,6 +155,7 @@ arrives over several calls; FRAME-BYTES-LEFT says how much of it remains."
 (defun ws-frame-info (handle)
   "Metadata for the frame currently being received, or NIL."
   (check-open handle)
+  (ensure-websockets)
   (%decode-ws-frame (%curl-ws-meta (handle-pointer handle))))
 
 (defun ws-close (handle &key (code 1000) reason)

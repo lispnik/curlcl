@@ -188,6 +188,7 @@
    #:socket-action
    #:multi-handles
    #:multi-waitfds
+   #:multi-waitfds-supported-p
    #:assign-socket-data
    #:multi-push-function
    #:push-header

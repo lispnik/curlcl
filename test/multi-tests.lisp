@@ -268,8 +268,11 @@
 
 (test the-descriptors-libcurl-wants-watched-can-be-listed
   ;; curl_multi_waitfds, the modern replacement for curl_multi_fdset -- no
-  ;; fd_set, so no FD_SETSIZE ceiling.
-  (with-multi (multi)
+  ;; fd_set, so no FD_SETSIZE ceiling.  Absent from libcurls still in wide use.
+  (if (not (multi-waitfds-supported-p))
+      (skip "this libcurl (~A) does not export curl_multi_waitfds"
+            (libcurl-version))
+   (with-multi (multi)
     (let ((handle (make-collecting-handle "/drip?n=5&ms=30")))
       (unwind-protect
            (progn
@@ -282,7 +285,7 @@
                (dolist (entry fds)
                  (is (integerp (car entry)))
                  (is (listp (cdr entry))))))
-        (close-handle handle)))))
+        (close-handle handle))))))
 
 (test multi-statistics-are-gated-on-the-libcurl-version
   ;; curl_multi_get_offt arrived in 8.21.0.
