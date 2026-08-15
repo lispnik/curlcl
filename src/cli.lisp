@@ -30,6 +30,23 @@
 
 ;;; Output --------------------------------------------------------------------
 
+(defun standard-descriptor (direction)
+  "The descriptor the running Lisp uses for its own standard stream.
+
+Not simply 0 and 1.  SBCL on Windows keeps an OS handle in an fd-stream's fd
+slot rather than a C-runtime descriptor, so passing a literal 1 to
+MAKE-FD-STREAM there builds a stream on handle 1 -- which is not standard
+output and generally not a handle at all.  That is what `curlcl -s URL' did on
+Windows, and it failed with \"The handle is invalid\" on the first byte of
+every response body.  Asking the implementation for the descriptor it is
+already using gets the right kind of number on both platforms without naming
+either."
+  (declare (ignorable direction))
+  #+sbcl (sb-sys:fd-stream-fd (if (eq direction :input)
+                                  sb-sys:*stdin*
+                                  sb-sys:*stdout*))
+  #-sbcl (if (eq direction :input) 0 1))
+
 (defun fd-byte-stream (fd direction)
   "A byte stream on FD, for standard input and standard output.
 
@@ -38,10 +55,10 @@ standard offers no way at all -- an existing stream's element type cannot be
 changed, and *STANDARD-INPUT* is a character stream whose external format would
 mangle arbitrary bytes.  Hence the clauses.
 
-Each named clause works wherever its implementation does, Windows included --
-SB-SYS:MAKE-FD-STREAM is not Unix-only.  The /dev/fd fallback is the part that
-is: an implementation not named here has no route on Windows.  None of this has
-been run on Windows at all, so treat it as written rather than working."
+FD comes from STANDARD-DESCRIPTOR rather than being written as 0 or 1, because
+what counts as a descriptor is implementation- and platform-specific; see there.
+The /dev/fd fallback is Unix-only, so an implementation not named here has no
+route on Windows."
   (declare (ignorable direction))
   #+sbcl (sb-sys:make-fd-stream fd :input (eq direction :input)
                                    :output (eq direction :output)
@@ -63,13 +80,13 @@ implementation, and ~A does not exist." fd path))
                :if-exists :append)))
 
 (defun binary-stdin ()
-  "A byte stream on file descriptor 0, for `-T -'."
-  (fd-byte-stream 0 :input))
+  "A byte stream on standard input, for `-T -'."
+  (fd-byte-stream (standard-descriptor :input) :input))
 
 (defvar *binary-stdout* nil)
 
 (defun binary-stdout ()
-  "The byte stream on file descriptor 1.
+  "The byte stream on standard output.
 
 Response bodies are octets and may be anything at all, so they go to the file
 descriptor rather than through *STANDARD-OUTPUT*, which would try to encode
@@ -78,7 +95,7 @@ them.
 Memoised: several buffered streams on one descriptor interleave their flushes,
 which under --parallel would shuffle the bodies together."
   (or *binary-stdout*
-      (setf *binary-stdout* (fd-byte-stream 1 :output))))
+      (setf *binary-stdout* (fd-byte-stream (standard-descriptor :output) :output))))
 
 (defun message (control &rest arguments)
   "Write a diagnostic to standard error, as curl does."
