@@ -297,8 +297,13 @@ as unverified rather than supported.
 
 `bin/curlcl` needs a byte stream on file descriptors 0 and 1, which the
 standard has no way to ask for. There are clauses for SBCL, ECL, CCL and CLISP,
-and a `/dev/fd` fallback for any other Unix implementation; only Windows is
-left without a route.
+and a `/dev/fd` fallback for any other Unix implementation.
+
+Windows is untested. Nothing here is knowingly Unix-only — the SBCL stdio
+clause works there, and `define-foreign-library` has a `:windows` clause for
+finding `libcurl.dll` — but that clause has never been executed, and
+`cffi-libffi` needs a libffi build, so treat Windows as unknown rather than
+supported.
 
 ## What is not bound, and why
 

@@ -36,9 +36,12 @@
 Every implementation can do this; none of them spells it the same way, and the
 standard offers no way at all -- an existing stream's element type cannot be
 changed, and *STANDARD-INPUT* is a character stream whose external format would
-mangle arbitrary bytes.  Hence the clauses.  The /dev/fd fallback covers any
-Unix implementation not named here; only Windows is left without a route, and
-this program has never been run there."
+mangle arbitrary bytes.  Hence the clauses.
+
+Each named clause works wherever its implementation does, Windows included --
+SB-SYS:MAKE-FD-STREAM is not Unix-only.  The /dev/fd fallback is the part that
+is: an implementation not named here has no route on Windows.  None of this has
+been run on Windows at all, so treat it as written rather than working."
   (declare (ignorable direction))
   #+sbcl (sb-sys:make-fd-stream fd :input (eq direction :input)
                                    :output (eq direction :output)
