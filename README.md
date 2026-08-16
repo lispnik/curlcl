@@ -70,16 +70,29 @@ in a libcurl that can speak `ws://`:
 
 ```
 brew tap lispnik/curlcl
+brew trust lispnik/curlcl
 brew install curlcl
 ```
 
+The `brew trust` line is required and is not particular to this tap: Homebrew
+refuses to load a formula from any third-party tap until told to, and without
+it the install stops at "Refusing to load formula … from untrusted tap".
+
 Or take a binary from [the releases](https://github.com/lispnik/curlcl/releases),
-built for Linux and macOS on both architectures and for Windows on x86-64.
-Unpack it and put `curlcl` on your `PATH`; the archives carry the libraries
-that are not part of a stock system. libcurl itself is *not* among them, on
-purpose — curlcl opens it at startup rather than linking it, so it uses the one
-already on your machine and gets that build's capabilities. `curlcl -V` prints
-which library it found and what that library can speak.
+built for Linux and macOS on both architectures and for Windows on x86-64. Each
+archive carries the libraries that are not part of a stock system, and each is
+checked in CI by running it with the build toolchain taken away.
+
+Unpack and put `curlcl` on your `PATH` — on Windows it is `bin\curlcl.exe`, and
+the archive's layout matters: MinGW's libcurl looks for its CA bundle relative
+to its own DLL, so `bin` and `etc` have to keep their positions or HTTPS stops
+working while plain HTTP carries on.
+
+libcurl itself is *not* bundled, on purpose — curlcl opens it at startup rather
+than linking it, so it uses the one already on your machine and gets that
+build's capabilities. `curlcl -V` prints which library it found and what that
+library can speak. On macOS the binaries are signed ad-hoc rather than
+notarised, so Gatekeeper wants `xattr -d com.apple.quarantine curlcl` first.
 
 ## Usage
 
