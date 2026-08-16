@@ -426,39 +426,6 @@ Version-gated functions — `curl_ws_start_frame`, `curl_multi_get_offt`,
 resolved at load time rather than declared, so an older libcurl reports the
 absence through `unsupported-feature` instead of failing at the first call.
 
-## Implementation Design Notes
-
-Two problems shaped the design, and both are the kind that produce wrong
-answers rather than error messages.
-
-**`curl_easy_setopt` is variadic, and that is not a formality.** Under the
-Darwin arm64 ABI, variadic arguments are passed on the stack while an ordinary
-CFFI call puts the third argument in a register. libcurl then reads the stack
-and gets whatever was there: no crash, no error code, the option simply takes
-a garbage value. On x86-64 the same wrong call happens to work, which is
-exactly why the bug hides. Every option and info call therefore goes through
-CFFI's `foreign-funcall-varargs`, which says which arguments are variadic and
-so gets them passed where libcurl looks; and the binding proves at load time
-that a value handed to a variadic argument arrives, because that failure would
-otherwise be silent. The test for it does not check that `setopt` returned
-`CURLE_OK` — that proves nothing — but that `CURLOPT_HTTP_VERSION` still sorts
-its sparse accepted set `{0–5, 30, 31}` from the gaps and from negatives into
-three different outcomes.
-
-**A Lisp condition must never unwind through a C frame.** Signalling out of a
-write callback is undefined behaviour, but so is swallowing the error. So a
-condition raised inside any callback is caught at the boundary, the callback
-returns the abort value libcurl documents for *that particular* callback — they
-are all different, and several are 32-bit magic numbers returned from functions
-declared `size_t` — and `perform` re-signals the original from Lisp once
-`curl_easy_perform` has returned. The caller sees their own `file-error`, not
-a generic `CURLE_WRITE_ERROR`.
-
-Callbacks reach Lisp through one static trampoline per C signature and a
-registry keyed by an integer stored in libcurl's own userdata slot. Every
-libcurl callback has such a slot — all 27 of them — so runtime-minted C
-function pointers are unnecessary here, and the read path takes no lock.
-
 ## License
 
 MIT. See [LICENSE](LICENSE).
