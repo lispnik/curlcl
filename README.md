@@ -254,6 +254,22 @@ real client needs rather than what is convenient to expose. `-Z` goes through
 One deliberate difference, noted in `--help`: there is no progress meter unless
 `--progress-bar` (or `-#`) is given.
 
+A `ws://` or `wss://` URL opens a websocket instead, standard input to frames
+and frames to standard output. This is the one place the driver goes *beyond*
+curl rather than following it — curl accepts the scheme but has no interactive
+mode for it, and the library underneath has the whole API:
+
+```
+$ printf 'hello\nagain\n' | curlcl ws://echo.example/
+hello
+again
+
+$ curlcl --ws-binary ws://echo.example/ < payload.bin > reply.bin
+```
+
+A line is one text frame, with the newline treated as the terminator it is;
+`--ws-binary` sends raw blocks and adds nothing on the way out.
+
 `curlcl -V` also reports **which** libcurl it loaded, which curl has no need to
 do — this binding can load any of several, and on macOS they differ in version,
 TLS backend and protocol support.

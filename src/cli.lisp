@@ -745,6 +745,144 @@ with both sets of headers in the order they arrived rather than only the last
         (message "~A" condition))
       (exit-code-for condition))))
 
+;;; Websockets ----------------------------------------------------------------
+;;;
+;;; This is the one place the driver goes beyond curl rather than following it.
+;;; curl accepts a ws:// URL but has no interactive mode for it; the library
+;;; underneath has the whole API, so the driver exposes it -- for the same
+;;; reason -V reports which libcurl was loaded, which curl has no need to do.
+;;;
+;;; An easy handle must not be used from two threads at once, so the obvious
+;;; shape -- a thread sending and a thread receiving -- is not available.  The
+;;; reader thread therefore touches nothing but standard input and a queue,
+;;; and the main loop owns the handle and does both halves.
+
+(defconstant +ws-drain-seconds+ 2
+  "How long to keep reading after standard input ends.
+
+A reply is in flight when the last line is sent, so closing the moment the
+queue empties throws it away.  The window ends early -- almost always
+immediately -- when the server answers the close frame, so this is a bound
+rather than a delay that is actually waited out.")
+
+(defun websocket-url-p (url)
+  "True for the schemes that mean a websocket."
+  (let ((scheme (string-downcase (or (getf (curlcl:parse-url url) :scheme) ""))))
+    (or (string= scheme "ws") (string= scheme "wss"))))
+
+(defstruct (stdin-queue (:conc-name queue-))
+  "Chunks read from standard input, waiting to be sent."
+  (lock (bt:make-lock "curlcl ws stdin queue"))
+  (items '())
+  (eof nil))
+
+(defun queue-push (queue item)
+  (bt:with-lock-held ((queue-lock queue))
+    (setf (queue-items queue) (append (queue-items queue) (list item)))))
+
+(defun queue-pop (queue)
+  (bt:with-lock-held ((queue-lock queue))
+    (pop (queue-items queue))))
+
+(defun queue-finished-p (queue)
+  (bt:with-lock-held ((queue-lock queue))
+    (and (queue-eof queue) (null (queue-items queue)))))
+
+(defun start-stdin-reader (queue binary)
+  "Read standard input into QUEUE until it ends.  Returns the thread.
+
+Lines in text mode, because a line is what an interactive user means by a
+message and the newline is a terminator rather than part of it; raw blocks in
+binary mode, where there is no such convention to appeal to."
+  (bt:make-thread
+   (lambda ()
+     (handler-case
+         (if binary
+             (let ((stream (binary-stdin))
+                   (buffer (make-array 65536 :element-type '(unsigned-byte 8))))
+               (loop for n = (read-sequence buffer stream)
+                     while (plusp n)
+                     do (queue-push queue (subseq buffer 0 n))))
+             (loop for line = (read-line *standard-input* nil nil)
+                   while line
+                   do (queue-push queue line)))
+       ;; The queue still has to be closed, or the main loop waits forever for
+       ;; input that can no longer arrive.
+       (error () nil))
+     (bt:with-lock-held ((queue-lock queue))
+       (setf (queue-eof queue) t)))
+   :name "curlcl ws stdin reader"))
+
+(defun perform-websocket (command url)
+  "Talk to a websocket, stdin to frames and frames to stdout.  Returns an exit code."
+  (unless (curlcl:websockets-supported-p)
+    (message "the loaded libcurl (~A) was built without websocket support"
+             (curlcl:libcurl-version))
+    ;; CURLE_UNSUPPORTED_PROTOCOL, which is what curl says for a scheme it
+    ;; cannot speak.
+    (return-from perform-websocket 1))
+  (let* ((binary (clingon:getopt command :ws-binary))
+         (queue (make-stdin-queue))
+         (out (binary-stdout))
+         (reader nil))
+    (handler-case
+        (unwind-protect
+             (curlcl:with-websocket (handle url)
+               (setf reader (start-stdin-reader queue binary))
+               (let ((closing nil) (deadline nil))
+                 (loop
+                   (let ((item (queue-pop queue)))
+                     (when item
+                       (if binary
+                           (curlcl:ws-send handle item :type :binary)
+                           (curlcl:ws-send-text handle item))))
+                   (multiple-value-bind (octets frame) (curlcl:ws-receive handle)
+                     (cond
+                       ((and frame (member :close (curlcl:frame-flags frame)))
+                        (return 0))
+                       (octets
+                        (write-sequence octets out)
+                        ;; A text frame carries no terminator, so one is added
+                        ;; here or everything the server says runs together.
+                        (when (and (not binary)
+                                   (member :text (curlcl:frame-flags frame)))
+                          (write-sequence (curlcl::coerce-to-octets
+                                           (string #\Newline))
+                                          out))
+                        (finish-output out)
+                        ;; Something arrived, so anything still coming is
+                        ;; worth waiting for: restart the drain window.
+                        (when closing
+                          (setf deadline (+ (get-internal-real-time)
+                                            (* +ws-drain-seconds+
+                                               internal-time-units-per-second)))))
+                       ;; Standard input has ended and everything queued has
+                       ;; gone.  Not the same as being finished: the replies to
+                       ;; what was just sent are still in flight, and closing
+                       ;; here loses them -- which it did, silently, dropping
+                       ;; every echo but the first.  Say goodbye, then keep
+                       ;; reading until the server says it back or the window
+                       ;; runs out.
+                       ((and (queue-finished-p queue) (not closing))
+                        (setf closing t
+                              deadline (+ (get-internal-real-time)
+                                          (* +ws-drain-seconds+
+                                             internal-time-units-per-second)))
+                        (curlcl:ws-close handle))
+                       ((and closing (> (get-internal-real-time) deadline))
+                        (return 0))
+                       ;; Nothing either way; wait rather than spin on
+                       ;; CURLE_AGAIN.
+                       (t (sleep 0.02)))))))
+          (when (and reader (bt:thread-alive-p reader))
+            ;; It is blocked reading a descriptor that is not ours to close.
+            (ignore-errors (bt:destroy-thread reader))))
+      (curlcl:curl-error (condition)
+        (unless (and (clingon:getopt command :silent)
+                     (not (clingon:getopt command :show-error)))
+          (message "~A" condition))
+        (exit-code-for condition)))))
+
 (defun perform-parallel (command urls)
   "Fetch every URL at once, for --parallel.  Returns an exit code."
   (let ((sinks (make-array (length urls) :initial-element nil))
@@ -922,6 +1060,9 @@ with both sets of headers in the order they arrived rather than only the last
    (clingon:make-option :string :long-name "unix-socket"
                         :description "connect through this Unix domain socket"
                         :key :unix-socket)
+   (clingon:make-option :flag :long-name "ws-binary"
+                        :description "send websocket frames as binary, not text"
+                        :key :ws-binary)
    (clingon:make-option :string :short-name #\z :long-name "time-cond"
                         :description "transfer only if changed since TIME"
                         :key :time-cond)
@@ -1006,14 +1147,27 @@ with both sets of headers in the order they arrived rather than only the last
       (message "try '~A --help' for more information" *program-name*)
       (clingon:exit 2))
     (clingon:exit
-     (if (clingon:getopt command :parallel)
-         (perform-parallel command urls)
-         (loop with worst = 0
-               for url in urls
-               for index from 0
-               for code = (perform-one command url index)
-               do (when (plusp code) (setf worst code))
-               finally (return worst))))))
+     (cond
+       ;; A websocket is a conversation rather than a transfer, so it does not
+       ;; go through the -Z batch or the sink machinery.  One URL only: two
+       ;; interactive sessions sharing a standard input has no useful meaning.
+       ((some #'websocket-url-p urls)
+        (cond ((rest urls)
+               (message "only one websocket URL at a time")
+               2)
+              ((clingon:getopt command :parallel)
+               (message "--parallel does not apply to a websocket")
+               2)
+              (t (perform-websocket command (first urls)))))
+       ((clingon:getopt command :parallel)
+        (perform-parallel command urls))
+       (t
+        (loop with worst = 0
+              for url in urls
+              for index from 0
+              for code = (perform-one command url index)
+              do (when (plusp code) (setf worst code))
+              finally (return worst)))))))
 
 (defun command ()
   (clingon:make-command

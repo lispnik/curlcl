@@ -504,6 +504,63 @@ differ for reasons that have nothing to do with what is being tested."
       ;; CURLE_FILESIZE_EXCEEDED.
       (is (= 63 code)))))
 
+(test a-websocket-url-is-recognised-by-its-scheme
+  (is (curlcl/cli::websocket-url-p "ws://example.com/"))
+  (is (curlcl/cli::websocket-url-p "wss://example.com/"))
+  (is (curlcl/cli::websocket-url-p "WS://example.com/"))
+  (is (not (curlcl/cli::websocket-url-p "http://example.com/")))
+  (is (not (curlcl/cli::websocket-url-p "https://example.com/ws"))))
+
+(defun run-with-input (arguments input)
+  "Run curlcl with ARGUMENTS, feeding INPUT on standard input."
+  (multiple-value-bind (output error-output code)
+      (uiop:run-program (cons (native-namestring-of *curlcl-binary*) arguments)
+                        :input (make-string-input-stream input)
+                        :output :string :error-output :string
+                        :ignore-error-status t)
+    (declare (ignore error-output))
+    (values output code)))
+
+(test the-driver-echoes-over-a-websocket
+  (with-curlcl-or-skip
+    (with-websockets-or-skip
+      (with-ws-server (server)
+        (multiple-value-bind (output code)
+            (run-with-input (list (ws-server-url server))
+                            (format nil "hello~%second line~%"))
+          (is (= 0 code))
+          ;; Both, and in order.  Closing as soon as standard input ended
+          ;; dropped everything but the first: the reply to the last line is
+          ;; still in flight at that moment.
+          (is (search "hello" output))
+          (is (search "second line" output))
+          (is (< (search "hello" output) (search "second line" output))))))))
+
+(test the-driver-sends-binary-websocket-frames-verbatim
+  (with-curlcl-or-skip
+    (with-websockets-or-skip
+      (with-ws-server (server)
+        (multiple-value-bind (output code)
+            (run-with-input (list "--ws-binary" (ws-server-url server))
+                            "raw-bytes")
+          (is (= 0 code))
+          ;; No added newline in binary mode, unlike text.
+          (is (string= "raw-bytes" output)))))))
+
+(test a-websocket-url-refuses-the-flags-that-make-no-sense-for-it
+  (with-curlcl-or-skip
+    (with-websockets-or-skip
+      (with-ws-server (server)
+        (let ((url (ws-server-url server)))
+          ;; Two conversations sharing one standard input has no meaning.
+          (multiple-value-bind (output code) (run-with-input (list url url) "")
+            (declare (ignore output))
+            (is (= 2 code)))
+          (multiple-value-bind (output code)
+              (run-with-input (list "-Z" url) "")
+            (declare (ignore output))
+            (is (= 2 code))))))))
+
 (test the-driver-runs-transfers-in-parallel
   ;; Timed against the sequential run rather than a fixed threshold.  A wall
   ;; clock bound has to be tight enough to prove overlap and loose enough to
