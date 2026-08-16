@@ -335,8 +335,14 @@ jobs:
           $env:PATH = "C:\Windows\System32;C:\Windows"
           & "$stage\curlcl.exe" -V
           if ($LASTEXITCODE -ne 0) { throw "curlcl.exe did not run without MSYS2 on PATH" }
-          & "$stage\curlcl.exe" -s -o NUL -w "smoke %{http_code}`n" https://example.com/
-          if ($LASTEXITCODE -ne 0) { throw "curlcl.exe could not fetch without MSYS2 on PATH" }
+          # Plain HTTP first, so a TLS problem is told apart from a DLL one:
+          # this proves the transfer path works, and only then does the next
+          # line ask whether certificates can be verified.
+          & "$stage\curlcl.exe" -sS -o NUL -w "http smoke %{http_code}`n" http://example.com/
+          if ($LASTEXITCODE -ne 0) { throw "curlcl.exe could not fetch over HTTP without MSYS2 on PATH" }
+          # -sS rather than -s: an error here has to say what it was.
+          & "$stage\curlcl.exe" -sS -o NUL -w "https smoke %{http_code}`n" https://example.com/
+          if ($LASTEXITCODE -ne 0) { throw "curlcl.exe could not fetch over HTTPS without MSYS2 on PATH" }
 
       - name: Archive
         shell: pwsh
