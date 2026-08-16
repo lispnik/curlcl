@@ -361,7 +361,17 @@ failure, transient or not."
         (t (remove :couldnt-connect curlcl:*retryable-codes*))))
 
 (defun retry-specification (command)
-  (let ((count (clingon:getopt command :retry)))
+  ;; All three are read before anything is decided, so that a malformed one is
+  ;; refused whether or not --retry came with it.  Parsing them inside the
+  ;; WHEN below meant `--retry-delay 0.5' alone was accepted in silence, where
+  ;; curl rejects it -- and a script that then added --retry would meet the
+  ;; complaint at some later date rather than at the typo.
+  (let ((count (let ((text (clingon:getopt command :retry)))
+                 (and text (parse-count "--retry" text))))
+        (delay (let ((text (clingon:getopt command :retry-delay)))
+                 (and text (parse-count "--retry-delay" text))))
+        (budget (let ((text (clingon:getopt command :retry-max-time)))
+                  (and text (parse-count "--retry-max-time" text)))))
     (when (and count (plusp count))
       ;; curl's --retry N means N retries after the first attempt.
       (append
@@ -374,15 +384,58 @@ failure, transient or not."
        ;; you did not say.  Multiplying it would make `--retry-delay 1 --retry 3'
        ;; take seven seconds where curl takes three.  The jitter goes with it
        ;; for the same reason -- an explicit number is an instruction.
-       (let ((delay (clingon:getopt command :retry-delay)))
-         (if delay
-             (list :initial-delay (float delay 1d0) :multiplier 1d0 :jitter 0d0)
-             ;; No delay given: curl's own default backoff starts at a second
-             ;; and doubles.  The jitter is ours and is kept -- it is invisible
-             ;; to a caller and it is what stops a fleet retrying in lockstep.
-             (list :initial-delay 1d0)))
-       (when (clingon:getopt command :retry-max-time)
-         (list :max-total-time (clingon:getopt command :retry-max-time)))))))
+       (if delay
+           (list :initial-delay (float delay 1d0) :multiplier 1d0 :jitter 0d0)
+           ;; No delay given: curl's own default backoff starts at a second
+           ;; and doubles.  The jitter is ours and is kept -- it is invisible
+           ;; to a caller and it is what stops a fleet retrying in lockstep.
+           (list :initial-delay 1d0))
+       (when budget (list :max-total-time budget))))))
+
+(define-condition bad-numeric-argument (error)
+  ((option :initarg :option :reader bad-numeric-argument-option)
+   (text :initarg :text :reader bad-numeric-argument-text))
+  (:report (lambda (condition stream)
+             (format stream "option ~A: expected a proper numerical parameter"
+                     (bad-numeric-argument-option condition))))
+  (:documentation
+   "A value that should have been a number was not.
+
+Signalled rather than reported and exited on the spot, so that the parsers
+stay ordinary functions the tests can call.  HANDLER turns it into curl's
+message and curl's exit code 2, at the one place that knows about both."))
+
+(defun numeric-argument-error (option text)
+  (error 'bad-numeric-argument :option option :text text))
+
+(defun parse-count (option text)
+  "A whole number of things -- seconds, bytes, redirects -- or an error.
+
+Not clingon's :INTEGER, which parses with :JUNK-ALLOWED and so reads \"0.5\"
+as 0 without a word.  Nothing rejected it and 0 is meaningful to libcurl, so
+`--max-filesize 0.5' asked for no size limit at all and `-m 0.5' for no
+timeout -- in both cases the opposite of the small number written.  curl
+answers these with \"expected a proper numerical parameter\" and exits 2."
+  (multiple-value-bind (value end) (parse-integer text :junk-allowed t)
+    (unless (and value (= end (length text)) (<= 0 value))
+      (numeric-argument-error option text))
+    value))
+
+(defun parse-seconds-as-ms (option text)
+  "Seconds, fractional allowed, as a whole number of milliseconds.
+
+curl takes `-m 0.5' and times out after half a second, which is the whole
+reason this is not PARSE-COUNT.  Milliseconds is how the fraction survives:
+CURLOPT_TIMEOUT is whole seconds, so half a second becomes 0 there, and 0
+means no timeout at all."
+  (let* ((*read-eval* nil)
+         (value (ignore-errors
+                 (let ((*read-default-float-format* 'double-float))
+                   (multiple-value-bind (object end) (read-from-string text)
+                     (and (= end (length text)) object))))))
+    (unless (and (realp value) (<= 0 value))
+      (numeric-argument-error option text))
+    (round (* 1000 value))))
 
 (defun parse-rate (text)
   "curl's --limit-rate: a byte count with an optional K, M, G or T suffix.
@@ -397,8 +450,7 @@ The suffixes are binary, as curl's are: 1K is 1024 and not 1000."
       (unless (and value
                    (or (= end (length trimmed))
                        (and scale (= end (1- (length trimmed))))))
-        (error "--limit-rate wants a number with an optional K, M, G or T, ~
-got ~S" text))
+        (numeric-argument-error "--limit-rate" text))
       (if scale (* value (expt 1024 (1+ scale))) value))))
 
 (defun parse-time-condition (text)
@@ -430,10 +482,20 @@ parts of the request, and there are a great many of them."
           (let ((bytes (parse-rate rate)))
             (add :max-recv-speed-large bytes)
             (add :max-send-speed-large bytes))))
-      (when (clingon:getopt command :continue-at)
-        (add :resume-from-large (clingon:getopt command :continue-at)))
-      (when (clingon:getopt command :max-filesize)
-        (add :maxfilesize-large (clingon:getopt command :max-filesize)))
+      ;; In milliseconds, and through :SETOPTS rather than REQUEST's :TIMEOUT,
+      ;; because that one is whole seconds -- `-m 0.5' would land as 0, which
+      ;; libcurl reads as no timeout at all rather than as a short one.
+      ;; :SETOPTS is applied after the named arguments, so these win over the
+      ;; default the client sets.
+      (let ((text (clingon:getopt command :max-time)))
+        (when text (add :timeout-ms (parse-seconds-as-ms "--max-time" text))))
+      (let ((text (clingon:getopt command :connect-timeout)))
+        (when text
+          (add :connecttimeout-ms (parse-seconds-as-ms "--connect-timeout" text))))
+      (let ((text (clingon:getopt command :continue-at)))
+        (when text (add :resume-from-large (parse-count "--continue-at" text))))
+      (let ((text (clingon:getopt command :max-filesize)))
+        (when text (add :maxfilesize-large (parse-count "--max-filesize" text))))
       ;; CURL_IPRESOLVE_V4 is 1 and V6 is 2.  -6 wins if both are given, as in
       ;; curl, where the last one parsed decides and ours are ordered.
       (when (clingon:getopt command :ipv4) (add :ipresolve 1))
@@ -466,6 +528,32 @@ parts of the request, and there are a great many of them."
         (add :httpproxytunnel t)))
     plist))
 
+(defun check-numeric-options (command)
+  "Parse everything that takes a number, for the complaint rather than the value.
+
+curl refuses a malformed value while it reads the command line, whatever else
+was asked for.  Here each is parsed where it is used, so one on a path that
+never ran was never looked at: `--parallel-max x' without -Z and
+`--retry-delay 0.5' without --retry both went through in silence, and the
+typo would surface later, on the day someone added the other flag."
+  (loop for (key name) in '((:retry "--retry")
+                            (:retry-delay "--retry-delay")
+                            (:retry-max-time "--retry-max-time")
+                            (:max-redirs "--max-redirs")
+                            (:continue-at "--continue-at")
+                            (:max-filesize "--max-filesize")
+                            (:parallel-max "--parallel-max"))
+        for text = (clingon:getopt command key)
+        when text do (parse-count name text))
+  (loop for (key name) in '((:max-time "--max-time")
+                            (:connect-timeout "--connect-timeout"))
+        for text = (clingon:getopt command key)
+        when text do (parse-seconds-as-ms name text))
+  (let ((rate (clingon:getopt command :limit-rate)))
+    (when rate (parse-rate rate)))
+  (let ((condition (clingon:getopt command :time-cond)))
+    (when condition (parse-time-condition condition))))
+
 (defun http-version-keyword (command)
   (cond ((clingon:getopt command :http1.0) :http/1.0)
         ((clingon:getopt command :http1.1) :http/1.1)
@@ -494,12 +582,8 @@ parts of the request, and there are a great many of them."
      ;; and "-" means standard input, which has no length to buffer by.
      (when upload
        (list :input (if (string= upload "-") (binary-stdin) upload)))
-     (when (clingon:getopt command :max-redirs)
-       (list :max-redirects (clingon:getopt command :max-redirs)))
-     (when (clingon:getopt command :max-time)
-       (list :timeout (clingon:getopt command :max-time)))
-     (when (clingon:getopt command :connect-timeout)
-       (list :connect-timeout (clingon:getopt command :connect-timeout)))
+     (let ((text (clingon:getopt command :max-redirs)))
+       (when text (list :max-redirects (parse-count "--max-redirs" text))))
      (when (clingon:getopt command :user)
        (multiple-value-bind (user password) (split-once (clingon:getopt command :user) #\:)
          (list :basic-auth (cons user (or password "")))))
@@ -940,7 +1024,8 @@ binary mode, where there is no such convention to appeal to."
                                              (declare (ignore attempt delay reason))
                                              (reset-sink (aref sinks index)))
                                  :max-connections
-                                 (or (clingon:getopt command :parallel-max) 8))
+                                 (let ((text (clingon:getopt command :parallel-max)))
+                                   (if text (parse-count "--parallel-max" text) 8)))
                  for url in urls
                  do (let ((code (if (typep outcome 'curlcl:response)
                                     (report-response command outcome)
@@ -1002,75 +1087,98 @@ binary mode, where there is no such convention to appeal to."
                         :key :show-version)
    (clingon:make-option :string :short-name #\X :long-name "request"
                         :description "specify request method to use"
-                        :key :request)
+                        :key :request
+                        :parameter "METHOD")
    (clingon:make-option :list :short-name #\H :long-name "header"
                         :description "pass custom header(s) to server"
-                        :key :header)
+                        :key :header
+                        :parameter "HEADER")
    (clingon:make-option :list :short-name #\d :long-name "data"
-                        :description "HTTP POST data" :key :data)
+                        :description "HTTP POST data" :key :data
+                        :parameter "DATA")
    (clingon:make-option :list :long-name "data-binary"
-                        :description "HTTP POST binary data" :key :data-binary)
+                        :description "HTTP POST binary data" :key :data-binary
+                        :parameter "DATA")
    (clingon:make-option :list :long-name "data-raw"
                         :description "HTTP POST data, '@' allowed"
-                        :key :data-raw)
+                        :key :data-raw
+                        :parameter "DATA")
    (clingon:make-option :list :long-name "data-urlencode"
                         :description "HTTP POST data URL encoded"
-                        :key :data-urlencode)
+                        :key :data-urlencode
+                        :parameter "DATA")
    (clingon:make-option :list :short-name #\F :long-name "form"
-                        :description "specify multipart form data" :key :form)
+                        :description "specify multipart form data" :key :form
+                        :parameter "NAME=CONTENT")
    (clingon:make-option :flag :short-name #\G :long-name "get"
                         :description "put the post data in the URL and use GET"
                         :key :get)
    (clingon:make-option :list :short-name #\o :long-name "output"
-                        :description "write to file instead of stdout" :key :output)
+                        :description "write to file instead of stdout" :key :output
+                        :parameter "FILE")
    (clingon:make-option :flag :short-name #\O :long-name "remote-name"
                         :description "write output to a file named as the remote file"
                         :key :remote-name)
    (clingon:make-option :string :short-name #\T :long-name "upload-file"
                         :description "transfer local FILE to destination (- for stdin)"
-                        :key :upload-file)
+                        :key :upload-file
+                        :parameter "FILE")
    (clingon:make-option :string :short-name #\u :long-name "user"
-                        :description "server user and password" :key :user)
+                        :description "server user and password" :key :user
+                        :parameter "USER:PASSWORD")
    (clingon:make-option :string :short-name #\A :long-name "user-agent"
-                        :description "send User-Agent to server" :key :user-agent)
+                        :description "send User-Agent to server" :key :user-agent
+                        :parameter "NAME")
    (clingon:make-option :string :short-name #\e :long-name "referer"
-                        :description "referrer URL" :key :referer)
+                        :description "referrer URL" :key :referer
+                        :parameter "URL")
    (clingon:make-option :string :short-name #\b :long-name "cookie"
-                        :description "send cookies from string" :key :cookie)
+                        :description "send cookies from string" :key :cookie
+                        :parameter "DATA|FILE")
    (clingon:make-option :string :short-name #\c :long-name "cookie-jar"
                         :description "write cookies to FILE after operation"
-                        :key :cookie-jar)
+                        :key :cookie-jar
+                        :parameter "FILE")
    (clingon:make-option :flag :short-name #\L :long-name "location"
                         :description "follow redirects" :key :location)
-   (clingon:make-option :integer :long-name "max-redirs"
+   (clingon:make-option :string :long-name "max-redirs"
                         :description "maximum number of redirects allowed"
-                        :key :max-redirs)
-   (clingon:make-option :integer :short-name #\m :long-name "max-time"
+                        :key :max-redirs
+                        :parameter "NUM")
+   (clingon:make-option :string :short-name #\m :long-name "max-time"
                         :description "maximum time allowed for the transfer"
-                        :key :max-time)
-   (clingon:make-option :integer :long-name "connect-timeout"
-                        :description "maximum time allowed for connection"
-                        :key :connect-timeout)
+                        :key :max-time
+                        :parameter "SECONDS")
+   (clingon:make-option :string :long-name "connect-timeout"
+                        :description "maximum time allowed to connect"
+                        :key :connect-timeout
+                        :parameter "SECONDS")
    (clingon:make-option :flag :short-name #\k :long-name "insecure"
                         :description "allow insecure server connections"
                         :key :insecure)
    (clingon:make-option :string :long-name "cacert"
                         :description "CA certificate to verify peer against"
-                        :key :cacert)
+                        :key :cacert
+                        :parameter "FILE")
    (clingon:make-option :string :short-name #\E :long-name "cert"
                         :description "client certificate file (CERT[:PASSWORD])"
-                        :key :cert)
+                        :key :cert
+                        :parameter "CERT[:PASSWORD]")
    (clingon:make-option :string :long-name "key"
-                        :description "private key file name" :key :key)
+                        :description "private key file name" :key :key
+                        :parameter "KEY")
    (clingon:make-option :string :long-name "limit-rate"
-                        :description "limit transfer speed to RATE (e.g. 200K)"
-                        :key :limit-rate)
-   (clingon:make-option :integer :short-name #\C :long-name "continue-at"
-                        :description "resume transfer at byte OFFSET"
-                        :key :continue-at)
-   (clingon:make-option :integer :long-name "max-filesize"
+                        :description "limit transfer speed, bytes/second (e.g. 200K)"
+                        :key :limit-rate
+                        :parameter "SPEED")
+   (clingon:make-option :string :short-name #\C :long-name "continue-at"
+                        :description "resumed transfer offset, in bytes"
+                        :key :continue-at
+                        :parameter "OFFSET")
+   (clingon:make-option :string :long-name "max-filesize"
                         :description "maximum file size to download"
-                        :key :max-filesize)
+                        :key :max-filesize
+                        :parameter "BYTES")
    (clingon:make-option :flag :short-name #\4 :long-name "ipv4"
                         :description "resolve names to IPv4 addresses"
                         :key :ipv4)
@@ -1078,31 +1186,39 @@ binary mode, where there is no such convention to appeal to."
                         :description "resolve names to IPv6 addresses"
                         :key :ipv6)
    (clingon:make-option :string :long-name "interface"
-                        :description "use network INTERFACE" :key :interface)
+                        :description "use network INTERFACE" :key :interface
+                        :parameter "NAME")
    (clingon:make-option :list :long-name "resolve"
                         :description "resolve HOST:PORT to ADDRESS"
-                        :key :resolve)
+                        :key :resolve
+                        :parameter "HOST:PORT:ADDRESS")
    (clingon:make-option :string :long-name "unix-socket"
                         :description "connect through this Unix domain socket"
-                        :key :unix-socket)
+                        :key :unix-socket
+                        :parameter "PATH")
    (clingon:make-option :flag :long-name "ws-binary"
                         :description "send websocket frames as binary, not text"
                         :key :ws-binary)
    (clingon:make-option :string :short-name #\z :long-name "time-cond"
                         :description "transfer only if changed since TIME"
-                        :key :time-cond)
+                        :key :time-cond
+                        :parameter "TIME")
    (clingon:make-option :string :short-name #\U :long-name "proxy-user"
-                        :description "proxy user and password" :key :proxy-user)
+                        :description "proxy user and password" :key :proxy-user
+                        :parameter "USER:PASSWORD")
    (clingon:make-option :string :long-name "noproxy"
                         :description "hosts which do not use a proxy"
-                        :key :noproxy)
+                        :key :noproxy
+                        :parameter "LIST")
    (clingon:make-option :flag :short-name #\p :long-name "proxytunnel"
                         :description "tunnel through the HTTP proxy"
                         :key :proxytunnel)
    (clingon:make-option :string :short-name #\x :long-name "proxy"
-                        :description "use this proxy" :key :proxy)
+                        :description "use this proxy" :key :proxy
+                        :parameter "URL")
    (clingon:make-option :string :short-name #\r :long-name "range"
-                        :description "retrieve only bytes within RANGE" :key :range)
+                        :description "retrieve only the bytes within RANGE" :key :range
+                        :parameter "RANGE")
    (clingon:make-option :flag :short-name #\I :long-name "head"
                         :description "show document info only" :key :head)
    (clingon:make-option :flag :short-name #\i :long-name "include"
@@ -1120,20 +1236,24 @@ binary mode, where there is no such convention to appeal to."
                         :key :fail)
    (clingon:make-option :string :short-name #\w :long-name "write-out"
                         :description "use output FORMAT after completion"
-                        :key :write-out)
+                        :key :write-out
+                        :parameter "FORMAT")
    (clingon:make-option :flag :long-name "compressed"
                         :description "request compressed response" :key :compressed)
    (clingon:make-option :flag :short-name #\# :long-name "progress-bar"
                         :description "display transfer progress as a bar"
                         :key :progress-bar)
-   (clingon:make-option :integer :long-name "retry"
-                        :description "retry request if transient problems occur"
-                        :key :retry)
-   (clingon:make-option :integer :long-name "retry-delay"
-                        :description "wait time between retries" :key :retry-delay)
-   (clingon:make-option :integer :long-name "retry-max-time"
-                        :description "retry only within this many seconds"
-                        :key :retry-max-time)
+   (clingon:make-option :string :long-name "retry"
+                        :description "retry this many times if transient problems occur"
+                        :key :retry
+                        :parameter "NUM")
+   (clingon:make-option :string :long-name "retry-delay"
+                        :description "wait time between retries" :key :retry-delay
+                        :parameter "SECONDS")
+   (clingon:make-option :string :long-name "retry-max-time"
+                        :description "retry only within this period"
+                        :key :retry-max-time
+                        :parameter "SECONDS")
    (clingon:make-option :flag :long-name "retry-all-errors"
                         :description "retry all errors, not just transient ones"
                         :key :retry-all-errors)
@@ -1142,17 +1262,20 @@ binary mode, where there is no such convention to appeal to."
                         :key :retry-connrefused)
    (clingon:make-option :string :short-name #\D :long-name "dump-header"
                         :description "write response headers to FILE"
-                        :key :dump-header)
+                        :key :dump-header
+                        :parameter "FILE")
    (clingon:make-option :string :long-name "oauth2-bearer"
-                        :description "OAuth 2 Bearer Token" :key :oauth2-bearer)
+                        :description "OAuth 2 Bearer Token" :key :oauth2-bearer
+                        :parameter "TOKEN")
    (clingon:make-option :flag :long-name "fail-with-body"
                         :description "fail on HTTP errors but save the body"
                         :key :fail-with-body)
    (clingon:make-option :flag :short-name #\Z :long-name "parallel"
                         :description "perform transfers in parallel" :key :parallel)
-   (clingon:make-option :integer :long-name "parallel-max"
+   (clingon:make-option :string :long-name "parallel-max"
                         :description "maximum concurrency for parallel transfers"
-                        :key :parallel-max)
+                        :key :parallel-max
+                        :parameter "NUM")
    (clingon:make-option :flag :long-name "http1.0" :description "use HTTP 1.0"
                         :key :http1.0)
    (clingon:make-option :flag :long-name "http1.1" :description "use HTTP 1.1"
@@ -1224,10 +1347,19 @@ the condition."
 (defun handler (command)
   (setf *quiet* (and (clingon:getopt command :silent) t
                      (not (clingon:getopt command :show-error))))
-  (with-write-failures-reported
-    (%handler command)))
+  (handler-case
+      (with-write-failures-reported
+        (%handler command))
+    ;; curl refuses a malformed number with exit 2 -- a usage error, not a
+    ;; transfer one -- and says which option it was.
+    (bad-numeric-argument (condition)
+      (message "~A" condition)
+      (uiop:quit 2 nil))))
 
 (defun %handler (command)
+  ;; Before anything is fetched: curl refuses a malformed number while it
+  ;; reads the command line, not after the transfer has already run.
+  (check-numeric-options command)
   (when (clingon:getopt command :show-version)
     ;; A closed pipe here is `curlcl -V | head', which curl treats as nothing
     ;; at all: it exits 0 and says nothing.  There is no transfer to report a

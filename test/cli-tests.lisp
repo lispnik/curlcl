@@ -402,6 +402,43 @@ differ for reasons that have nothing to do with what is being tested."
     ;; No --retry at all means no policy, not a policy of one attempt.
     (is (null (policy)))))
 
+(test a-quantity-is-parsed-strictly-or-refused
+  ;; clingon's :INTEGER parses with :JUNK-ALLOWED, so "0.5" came back as 0
+  ;; without a word -- and 0 is not a small number to libcurl, it is "no
+  ;; limit".  `--max-filesize 0.5' asked for no size cap and `-m 0.5' for no
+  ;; timeout: the opposite of what was written, silently.
+  (is (= 5 (curlcl/cli::parse-count "--retry" "5")))
+  (is (= 0 (curlcl/cli::parse-count "--retry" "0")))
+  ;; Whole argument or nothing.
+  (signals error (curlcl/cli::parse-count "--retry" "0.5"))
+  (signals error (curlcl/cli::parse-count "--retry" "5x"))
+  (signals error (curlcl/cli::parse-count "--retry" "abc"))
+  (signals error (curlcl/cli::parse-count "--retry" "-1"))
+  ;; -m and --connect-timeout are the two curl takes fractionally, and
+  ;; milliseconds are how the fraction survives: CURLOPT_TIMEOUT is whole
+  ;; seconds, where half a second is zero, which is no timeout at all.
+  (is (= 500 (curlcl/cli::parse-seconds-as-ms "--max-time" "0.5")))
+  (is (= 2000 (curlcl/cli::parse-seconds-as-ms "--max-time" "2")))
+  (is (= 1500 (curlcl/cli::parse-seconds-as-ms "--max-time" "1.5")))
+  (signals error (curlcl/cli::parse-seconds-as-ms "--max-time" "abc"))
+  (signals error (curlcl/cli::parse-seconds-as-ms "--max-time" "1s"))
+  (signals error (curlcl/cli::parse-seconds-as-ms "--max-time" "-1")))
+
+(test a-malformed-quantity-is-refused-even-on-a-path-not-taken
+  ;; Each value used to be parsed where it was consumed, so one belonging to a
+  ;; branch that never ran was never checked: --parallel-max without -Z, and
+  ;; --retry-delay without --retry, were both accepted in silence.  curl reads
+  ;; the whole command line first.
+  (flet ((check (&rest arguments)
+           (curlcl/cli::check-numeric-options
+            (clingon:parse-command-line (curlcl/cli::command)
+                                        (append arguments (list "http://x/"))))))
+    (is (null (check "--retry" "3")))
+    (signals error (check "--parallel-max" "x"))
+    (signals error (check "--retry-delay" "0.5"))
+    (signals error (check "--limit-rate" "bogus"))
+    (signals error (check "-m" "abc"))))
+
 (test limit-rate-accepts-curls-suffixes
   (is (= 1024 (curlcl/cli::parse-rate "1K")))
   (is (= 204800 (curlcl/cli::parse-rate "200K")))
