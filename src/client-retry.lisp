@@ -86,6 +86,13 @@ same lockstep by another route.")
   (codes *retryable-codes*)
   (statuses *retryable-statuses*)
   (non-idempotent nil)
+  ;; Seconds from the first attempt after which no further retry is started,
+  ;; or NIL for no limit.  It bounds when a retry may *begin*, not when the
+  ;; whole thing must be over: an attempt already under way is left to finish
+  ;; or time out on its own, so the total can exceed this.  That is curl's
+  ;; --retry-max-time, and the alternative -- abandoning a transfer mid-flight
+  ;; -- is a different feature (:TIMEOUT) that already exists.
+  (max-total-time nil)
   ;; Honour a Retry-After header in preference to the computed backoff: the
   ;; server knows better than we do.
   (respect-retry-after t))
@@ -127,11 +134,17 @@ that one is an instruction, not an estimate."
             base))))
 
 (defun retryable-condition-p (policy condition)
-  "True when CONDITION is a transport failure this policy retries."
+  "True when CONDITION is a transport failure this policy retries.
+
+CODES may be T for every transport failure, which is curl's
+--retry-all-errors.  A CALLBACK-ERROR is never retried whatever CODES says:
+it is our own code that failed, not the transfer, and repeating it repeats the
+bug."
   (and (typep condition 'easy-error)
        (not (typep condition 'callback-error))
-       (member (curl-error-code-name condition) (retry-codes policy))
-       t))
+       (let ((codes (retry-codes policy)))
+         (or (eq codes t)
+             (and (member (curl-error-code-name condition) codes) t)))))
 
 (defun retryable-response-p (policy response)
   (and (member (response-status response) (retry-statuses policy)) t))
@@ -169,30 +182,41 @@ BODY is expected to return a RESPONSE.  ON-RETRY, if given, is called with
 (attempt delay reason) before each wait, which is what a caller hooks logging
 onto."
   (alexandria:with-gensyms (attempt result condition delay reason retry-after
-                            policy-var method-var hook)
+                            policy-var method-var hook start spent-p)
     `(let ((,policy-var ,policy)
            (,method-var ,method)
            (,hook ,on-retry)
-           (,attempt 0))
-       (loop
-         (incf ,attempt)
-         (let ((,reason nil) (,retry-after nil) (,result nil))
-           (handler-case (setf ,result (progn ,@body))
-             (easy-error (,condition)
-               (when (or (>= ,attempt (retry-max-attempts ,policy-var))
-                         (not (retryable-condition-p ,policy-var ,condition))
-                         (not (retryable-method-p ,policy-var ,method-var)))
-                 (error ,condition))
-               (setf ,reason ,condition)))
-           (when (and (null ,reason) ,result)
-             ;; A response arrived; it may still be one worth retrying.
-             (if (and (< ,attempt (retry-max-attempts ,policy-var))
-                      (retryable-response-p ,policy-var ,result)
-                      (retryable-method-p ,policy-var ,method-var))
-                 (setf ,reason ,result
-                       ,retry-after (response-retry-after ,result))
-                 (return ,result)))
-           (let ((,delay (retry-delay ,policy-var ,attempt
-                                      :retry-after ,retry-after)))
-             (when ,hook (funcall ,hook ,attempt ,delay ,reason))
-             (when (plusp ,delay) (sleep ,delay))))))))
+           (,attempt 0)
+           ;; Started before the first attempt, as curl does, so the budget
+           ;; covers the attempts and the waits between them.
+           (,start (get-internal-real-time)))
+       (flet ((,spent-p ()
+                (let ((limit (retry-max-total-time ,policy-var)))
+                  (and limit
+                       (>= (/ (- (get-internal-real-time) ,start)
+                              internal-time-units-per-second)
+                           limit)))))
+         (loop
+           (incf ,attempt)
+           (let ((,reason nil) (,retry-after nil) (,result nil))
+             (handler-case (setf ,result (progn ,@body))
+               (easy-error (,condition)
+                 (when (or (>= ,attempt (retry-max-attempts ,policy-var))
+                           (,spent-p)
+                           (not (retryable-condition-p ,policy-var ,condition))
+                           (not (retryable-method-p ,policy-var ,method-var)))
+                   (error ,condition))
+                 (setf ,reason ,condition)))
+             (when (and (null ,reason) ,result)
+               ;; A response arrived; it may still be one worth retrying.
+               (if (and (< ,attempt (retry-max-attempts ,policy-var))
+                        (not (,spent-p))
+                        (retryable-response-p ,policy-var ,result)
+                        (retryable-method-p ,policy-var ,method-var))
+                   (setf ,reason ,result
+                         ,retry-after (response-retry-after ,result))
+                   (return ,result)))
+             (let ((,delay (retry-delay ,policy-var ,attempt
+                                        :retry-after ,retry-after)))
+               (when ,hook (funcall ,hook ,attempt ,delay ,reason))
+               (when (plusp ,delay) (sleep ,delay)))))))))

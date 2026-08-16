@@ -228,6 +228,10 @@ $ curlcl -s -L -H 'Accept: application/json' https://api.example.com/thing
 $ curlcl -s -F 'file=@report.pdf;type=application/pdf' https://example.com/upload
 $ curlcl -sZ -o a.html -o b.html https://a.example/ https://b.example/   # parallel
 $ curlcl --retry 3 https://flaky.example/                                # scheduled backoff
+
+$ curlcl -s -d @payload.json -H 'Content-Type: application/json' https://api.example/
+$ curlcl -s --data-urlencode 'q=a b&c' https://example.com/search
+$ curlcl -s -D headers.txt -o body.html https://example.com/
 ```
 
 Holding to curl's behaviour is the point: it forces the library to cover what a

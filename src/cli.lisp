@@ -342,14 +342,41 @@ order here.  It shows only when the flags are interleaved -- `-d a
     (setf (curlcl:url-part parsed :query :append-query) data)
     (curlcl:url-string parsed)))
 
+(defun retry-codes-for (command)
+  "Which transport failures --retry should retry, as curl chooses them.
+
+The library retries a refused connection by default; curl does not, and makes
+you ask with --retry-connrefused.  Following curl here rather than the library
+default is the whole point of this driver, so the code is removed unless the
+flag is given.  --retry-all-errors is curl's sledgehammer: every transport
+failure, transient or not."
+  (cond ((clingon:getopt command :retry-all-errors) t)
+        ((clingon:getopt command :retry-connrefused) curlcl:*retryable-codes*)
+        (t (remove :couldnt-connect curlcl:*retryable-codes*))))
+
 (defun retry-specification (command)
   (let ((count (clingon:getopt command :retry)))
     (when (and count (plusp count))
       ;; curl's --retry N means N retries after the first attempt.
-      (list :max-attempts (1+ count)
-            :initial-delay (float (or (clingon:getopt command :retry-delay) 1) 1d0)
-            ;; curl retries whatever it was asked to, including POST.
-            :non-idempotent t))))
+      (append
+       (list :max-attempts (1+ count)
+             :codes (retry-codes-for command)
+             ;; curl retries whatever it was asked to, including POST.
+             :non-idempotent t)
+       ;; --retry-delay in curl is a delay, not a starting point: it waits
+       ;; exactly that long each time, and backs off exponentially only when
+       ;; you did not say.  Multiplying it would make `--retry-delay 1 --retry 3'
+       ;; take seven seconds where curl takes three.  The jitter goes with it
+       ;; for the same reason -- an explicit number is an instruction.
+       (let ((delay (clingon:getopt command :retry-delay)))
+         (if delay
+             (list :initial-delay (float delay 1d0) :multiplier 1d0 :jitter 0d0)
+             ;; No delay given: curl's own default backoff starts at a second
+             ;; and doubles.  The jitter is ours and is kept -- it is invisible
+             ;; to a caller and it is what stops a fleet retrying in lockstep.
+             (list :initial-delay 1d0)))
+       (when (clingon:getopt command :retry-max-time)
+         (list :max-total-time (clingon:getopt command :retry-max-time)))))))
 
 (defun http-version-keyword (command)
   (cond ((clingon:getopt command :http1.0) :http/1.0)
@@ -388,6 +415,8 @@ order here.  It shows only when the flags are interleaved -- `-d a
      (when (clingon:getopt command :user)
        (multiple-value-bind (user password) (split-once (clingon:getopt command :user) #\:)
          (list :basic-auth (cons user (or password "")))))
+     (when (clingon:getopt command :oauth2-bearer)
+       (list :bearer-auth (clingon:getopt command :oauth2-bearer)))
      (when (clingon:getopt command :user-agent)
        (list :user-agent (clingon:getopt command :user-agent)))
      (when (clingon:getopt command :referer)
@@ -444,7 +473,11 @@ script relying on that would otherwise get silence."
       (write-string (expand-write-out format response) *standard-output*)
       (finish-output *standard-output*)))
   (let ((status (curlcl:response-status response)))
-    (cond ((and (clingon:getopt command :fail) (<= 400 status))
+    (cond ((and (or (clingon:getopt command :fail)
+                    ;; Same exit code, same message; the difference is only
+                    ;; that MAKE-SINKS lets the body through.
+                    (clingon:getopt command :fail-with-body))
+                (<= 400 status))
            (unless (clingon:getopt command :silent)
              (message "The requested URL returned error: ~D" status))
            ;; CURLE_HTTP_RETURNED_ERROR, which is what curl --fail exits with.
@@ -510,8 +543,10 @@ flush loses data, and the exit code has to say so."
     (let ((space (position #\Space line)))
       (when space (parse-integer line :start (1+ space) :junk-allowed t)))))
 
-(defun make-sinks (command sink)
+(defun make-sinks (command sink &optional dump)
   "Header and body callbacks for one transfer.  Returns (values header data status).
+
+DUMP, when given, is the byte stream -D writes the response headers to.
 
 STATUS is a cons whose car tracks the most recent response code, so --fail can
 suppress output from the status line onward.
@@ -533,6 +568,14 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
        (lambda (line)
          (let ((code (parse-status-line line)))
            (when code (setf (car status) code)))
+         ;; -D captures what arrived, whether or not --fail is hiding it from
+         ;; the output: the file is there to be read afterwards, and a header
+         ;; dump that silently empties itself on a 404 would be a poor way to
+         ;; find out why.
+         (when dump
+           (write-sequence (curlcl::coerce-to-octets
+                            (format nil "~A~C~C" line #\Return #\Newline))
+                           dump))
          (when (and include (not (suppressed-p)))
            (write-sequence (curlcl::coerce-to-octets
                             (format nil "~A~C~C" line #\Return #\Newline))
@@ -543,6 +586,25 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
          (unless (suppressed-p)
            (write-sequence octets (sink-stream sink))))
        status))))
+
+(defmacro with-dump-header ((variable command index) &body body)
+  "Bind VARIABLE to the stream -D dumps headers to, or NIL when it was not given.
+
+Truncated for the first URL and appended to for the rest, so `-D h a b' ends
+with both sets of headers in the order they arrived rather than only the last
+-- which is what curl does, and the reason the index has to reach this far."
+  (alexandria:once-only (command index)
+    `(let ((path (clingon:getopt ,command :dump-header)))
+       (if path
+           (with-open-file (,variable path :direction :output
+                                           :element-type '(unsigned-byte 8)
+                                           :if-does-not-exist :create
+                                           :if-exists (if (zerop ,index)
+                                                          :supersede
+                                                          :append))
+             ,@body)
+           (let ((,variable nil))
+             ,@body)))))
 
 (defun progress-reporter (command)
   "A progress callback for --progress-bar, or NIL."
@@ -575,7 +637,8 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
                                   (append-query url (curlcl::octets-to-string query))
                                   url))
                (progress (progress-reporter command)))
-          (multiple-value-bind (on-header on-data) (make-sinks command sink)
+          (with-dump-header (dump command index)
+           (multiple-value-bind (on-header on-data) (make-sinks command sink dump)
            (let ((response (apply #'curlcl:request effective-url
                                   :on-data on-data
                                   :on-header on-header
@@ -591,7 +654,7 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
                                    (when progress (list :on-progress progress))
                                    options))))
              (when progress (format *error-output* "~%"))
-             (report-response command response)))))
+             (report-response command response))))))
     (curlcl:curl-error (condition)
       (unless (and (clingon:getopt command :silent)
                    (not (clingon:getopt command :show-error)))
@@ -604,6 +667,11 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
         (open-p t)
         (worst 0))
     (unwind-protect
+         ;; One dump file for the whole batch, opened once at index 0: the
+         ;; transfers interleave, so per-transfer truncation would leave
+         ;; whichever finished last and lose the rest.  Their headers arrive
+         ;; mixed together, which is inherent to -Z and true of curl too.
+         (with-dump-header (dump command 0)
          (let ((requests
                  (loop for url in urls
                        for index from 0
@@ -611,7 +679,7 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
                                                        command url index))))
                                  (setf (aref sinks index) sink)
                                  (multiple-value-bind (on-header on-data)
-                                     (make-sinks command sink)
+                                     (make-sinks command sink dump)
                                    (list* url :on-data on-data
                                           :on-header on-header
                                           :retry-streamed t
@@ -651,7 +719,7 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
                           ;; write.
                           (setf worst 23))))
            (setf open-p nil)
-           worst)
+           worst))
       ;; Only reached on a non-local exit; the normal path closed them above.
       (when open-p
         (loop for sink across sinks
@@ -774,6 +842,23 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
                         :key :retry)
    (clingon:make-option :integer :long-name "retry-delay"
                         :description "wait time between retries" :key :retry-delay)
+   (clingon:make-option :integer :long-name "retry-max-time"
+                        :description "retry only within this many seconds"
+                        :key :retry-max-time)
+   (clingon:make-option :flag :long-name "retry-all-errors"
+                        :description "retry all errors, not just transient ones"
+                        :key :retry-all-errors)
+   (clingon:make-option :flag :long-name "retry-connrefused"
+                        :description "retry on connection refused"
+                        :key :retry-connrefused)
+   (clingon:make-option :string :short-name #\D :long-name "dump-header"
+                        :description "write response headers to FILE"
+                        :key :dump-header)
+   (clingon:make-option :string :long-name "oauth2-bearer"
+                        :description "OAuth 2 Bearer Token" :key :oauth2-bearer)
+   (clingon:make-option :flag :long-name "fail-with-body"
+                        :description "fail on HTTP errors but save the body"
+                        :key :fail-with-body)
    (clingon:make-option :flag :short-name #\Z :long-name "parallel"
                         :description "perform transfers in parallel" :key :parallel)
    (clingon:make-option :integer :long-name "parallel-max"

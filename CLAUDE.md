@@ -78,6 +78,20 @@ package → conditions → library → types → varargs → easy-raw → memory
   by testing on Linux. Use `%setopt-long`, `%setopt-pointer`, `%setopt-off-t`
   and `%getinfo` from `src/varargs.lisp`.
 
+- **For anything with a wire format curl already defines, diff against curl.**
+  `curlcl` is a curl workalike, so "what should this send?" has an authority,
+  and it is not our reading of the RFC. `--data-urlencode` shipped `%20` where
+  curl sends `+` — it is *form* encoding, which `curl_easy_escape` cannot
+  spell — and an assertion written from first principles agreed with the bug.
+  Two more surfaced the same way: `-d @file` was never read at all, and
+  `--retry-delay` was taken as the *first* delay of an exponential backoff
+  when in curl it is the whole delay, so `--retry-delay 1 --retry 3` waited
+  seven seconds against curl's three. `the-data-flags-agree-with-curl-byte-for-byte`
+  is the pattern; detect curl by exit status, since `run-program` with
+  `:output nil` returns `NIL` even on success and the obvious test skips
+  forever. Compare `/echo`'s `body=` line rather than whole outputs — the
+  User-Agent differs for reasons that are not what is under test.
+
 - **A test that only checks `CURLE_OK` proves nothing about argument passing.**
   Pick an option whose *value* libcurl validates and assert on the shape of the
   validation. `CURLOPT_HTTP_VERSION` accepts the sparse set `{0–5, 30, 31}`,

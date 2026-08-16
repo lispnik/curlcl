@@ -202,6 +202,23 @@ gets it from the command line, so there is nothing to translate it for us."
       (is (search "body=a=1&b=2" output))
       (is (search "x-from: curlcl" (string-downcase output))))))
 
+(defun count-substring (needle haystack)
+  "How many non-overlapping times NEEDLE occurs in HAYSTACK."
+  (loop with step = (max 1 (length needle))
+        for start = 0 then (+ found step)
+        for found = (search needle haystack :start2 start)
+        while found
+        count 1))
+
+(defun dead-url ()
+  "A URL nothing is listening on, for the retry timings.
+
+Port 1 rather than an ephemeral one closed just beforehand: the same address
+A-PROXY-THAT-IS-NOT-LISTENING-FAILS-AS-THE-PROXY has used across all three CI
+platforms, and it cannot be won by a racing process the way a just-released
+ephemeral port can."
+  "http://127.0.0.1:1/")
+
 (defmacro with-data-file ((path content) &body body)
   "Write CONTENT to a temporary file and bind PATH to its namestring."
   `(uiop:with-temporary-file (:pathname file :stream out :direction :output
@@ -298,6 +315,108 @@ differ for reasons that have nothing to do with what is being tested."
                   "curlcl sent ~S where curl sent ~S, for ~{~A ~}"
                   ours theirs arguments))))
         (skip "curl is not installed"))))
+
+(test -D-writes-the-response-headers-to-a-file
+  (with-curlcl-or-skip
+    (uiop:with-temporary-file (:pathname dump)
+      (multiple-value-bind (output code)
+          (run-program-capturing (native-namestring-of *curlcl-binary*)
+                                 (list "-s" "-D" (uiop:native-namestring dump)
+                                       "-o" (null-device) (test-url "/ok")))
+        (declare (ignore output))
+        (is (= 0 code))
+        (let ((dumped (uiop:read-file-string dump)))
+          (is (search "HTTP/1.1 200" dumped))
+          (is (search "Content-Length:" dumped)))))))
+
+(test -D-keeps-the-headers-of-every-url-not-just-the-last
+  ;; Truncating per transfer would leave only the final set, which is the
+  ;; obvious implementation and the wrong one.
+  (with-curlcl-or-skip
+    (uiop:with-temporary-file (:pathname dump)
+      (run-program-capturing (native-namestring-of *curlcl-binary*)
+                             (list "-s" "-D" (uiop:native-namestring dump)
+                                   "-o" (null-device) "-o" (null-device)
+                                   (test-url "/ok") (test-url "/ok")))
+      (let ((dumped (uiop:read-file-string dump)))
+        (is (= 2 (count-substring "HTTP/1.1 200" dumped)))))))
+
+(test --dump-header-still-writes-when-fail-hides-the-body
+  ;; -D is read afterwards to find out what happened; emptying it on the
+  ;; failure it exists to explain would be perverse.
+  (with-curlcl-or-skip
+    (uiop:with-temporary-file (:pathname dump)
+      (run-program-capturing (native-namestring-of *curlcl-binary*)
+                             (list "-s" "-f" "-D" (uiop:native-namestring dump)
+                                   (test-url "/status/404")))
+      (is (search "404" (uiop:read-file-string dump))))))
+
+(test --oauth2-bearer-sends-an-authorization-header
+  (with-curlcl-or-skip
+    (let ((output (run-program-capturing
+                   (native-namestring-of *curlcl-binary*)
+                   (list "-s" "--oauth2-bearer" "T0KEN" (test-url "/echo")))))
+      (is (search "authorization: bearer t0ken" (string-downcase output))))))
+
+(test --fail-with-body-keeps-the-body-and-still-exits-22
+  (with-curlcl-or-skip
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" "--fail-with-body"
+                                     (test-url "/status/404")))
+      (is (= 22 code))
+      (is (plusp (length output))))))
+
+(test --retry-connrefused-decides-whether-a-refusal-is-retried
+  ;; The library retries a refused connection by default and curl does not, so
+  ;; the driver has to subtract it.  Timed rather than counted: with no retry
+  ;; the refusal comes back at once, and each retry adds its delay.
+  (with-curlcl-or-skip
+    (let ((dead (dead-url)))
+      (flet ((seconds (arguments)
+               (let ((start (get-internal-real-time)))
+                 (run-program-capturing (native-namestring-of *curlcl-binary*)
+                                        (append (list "-s") arguments (list dead)))
+                 (/ (- (get-internal-real-time) start)
+                    internal-time-units-per-second))))
+        (let ((without (seconds (list "--retry" "2" "--retry-delay" "1")))
+              (with (seconds (list "--retry" "2" "--retry-delay" "1"
+                                   "--retry-connrefused"))))
+          (is (< without 1) "a refusal was retried without --retry-connrefused")
+          (is (<= 2 with) "--retry-connrefused did not retry a refusal"))))))
+
+(test --retry-delay-is-a-fixed-delay-not-a-starting-point
+  ;; curl backs off exponentially only when --retry-delay is absent; given
+  ;; one, it waits exactly that long each time.  Multiplying it made
+  ;; `--retry-delay 1 --retry 3' take seven seconds where curl takes three.
+  (with-curlcl-or-skip
+    (let* ((dead (dead-url))
+           (start (get-internal-real-time)))
+      (run-program-capturing (native-namestring-of *curlcl-binary*)
+                             (list "-s" "--retry" "3" "--retry-delay" "1"
+                                   "--retry-connrefused" dead))
+      (let ((elapsed (/ (- (get-internal-real-time) start)
+                        internal-time-units-per-second)))
+        ;; Three fixed one-second waits, not 1+2+4.
+        (is (<= 2.5 elapsed) "the retries did not wait at all")
+        (is (< elapsed 6) "~,1Fs suggests the delay is still being doubled"
+            elapsed)))))
+
+(test --retry-max-time-stops-the-retrying
+  (with-curlcl-or-skip
+    (let* ((dead (dead-url))
+           (start (get-internal-real-time)))
+      (run-program-capturing (native-namestring-of *curlcl-binary*)
+                             (list "-s" "--retry" "20" "--retry-delay" "1"
+                                   "--retry-connrefused" "--retry-max-time" "2"
+                                   dead))
+      (let ((elapsed (/ (- (get-internal-real-time) start)
+                        internal-time-units-per-second)))
+        ;; Twenty retries a second apart, cut off after two seconds.  Generous
+        ;; on the upper bound: the budget bounds when a retry may start, and
+        ;; the attempt that started inside it still finishes.
+        (is (< elapsed 8) "~,1Fs: --retry-max-time did not bound the retrying"
+            elapsed)))))
 
 (test the-driver-runs-transfers-in-parallel
   ;; Timed against the sequential run rather than a fixed threshold.  A wall
