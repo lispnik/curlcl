@@ -281,6 +281,39 @@
                                       :non-idempotent t))))
     (is (= 200 (response-status response)))))
 
+(defun attempt-number (body)
+  "The N from the /flaky route's \"attempt N of M\"."
+  (let ((at (search "attempt " body)))
+    (when at (parse-integer body :start (+ at 8) :junk-allowed t))))
+
+(test max-total-time-stops-the-retrying-before-the-attempts-run-out
+  ;; Counted rather than timed.  A timed version of this passed on macOS and
+  ;; Linux and failed on Windows, where a dead port does not refuse promptly,
+  ;; so the elapsed time said more about the platform than about the policy.
+  ;; The attempt number the server reports is the same everywhere, and a slow
+  ;; machine can only exhaust the budget sooner -- never later.
+  (reset-flaky "budget")
+  (let* ((response (http-get (test-url "/flaky?id=budget&fail=50")
+                             :retry '(:max-attempts 20 :initial-delay 0.3
+                                      :multiplier 1.0 :jitter 0.0
+                                      :max-total-time 0.5)))
+         (attempts (attempt-number (response-body response))))
+    (is (= 503 (response-status response)))
+    ;; Attempts 0.3s apart under a 0.5s budget: the third is the last that may
+    ;; start, and well short of the twenty the count alone would allow.
+    (is (and attempts (<= attempts 4))
+        "~A attempts under a 0.5s budget" attempts)
+    (is (and attempts (< attempts 20))
+        "the budget did not bound the retrying at all")))
+
+(test the-attempt-count-still-governs-when-there-is-no-budget
+  (reset-flaky "nobudget")
+  (let* ((response (http-get (test-url "/flaky?id=nobudget&fail=50")
+                             :retry '(:max-attempts 3 :initial-delay 0.01)))
+         (attempts (attempt-number (response-body response))))
+    (is (= 503 (response-status response)))
+    (is (eql 3 attempts))))
+
 (test a-transport-failure-is-retried
   (let ((attempts 0))
     (handler-case

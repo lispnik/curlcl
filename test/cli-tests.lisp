@@ -367,56 +367,40 @@ differ for reasons that have nothing to do with what is being tested."
       (is (= 22 code))
       (is (plusp (length output))))))
 
-(test --retry-connrefused-decides-whether-a-refusal-is-retried
-  ;; The library retries a refused connection by default and curl does not, so
-  ;; the driver has to subtract it.  Timed rather than counted: with no retry
-  ;; the refusal comes back at once, and each retry adds its delay.
-  (with-curlcl-or-skip
-    (let ((dead (dead-url)))
-      (flet ((seconds (arguments)
-               (let ((start (get-internal-real-time)))
-                 (run-program-capturing (native-namestring-of *curlcl-binary*)
-                                        (append (list "-s") arguments (list dead)))
-                 (/ (- (get-internal-real-time) start)
-                    internal-time-units-per-second))))
-        (let ((without (seconds (list "--retry" "2" "--retry-delay" "1")))
-              (with (seconds (list "--retry" "2" "--retry-delay" "1"
-                                   "--retry-connrefused"))))
-          (is (< without 1) "a refusal was retried without --retry-connrefused")
-          (is (<= 2 with) "--retry-connrefused did not retry a refusal"))))))
-
-(test --retry-delay-is-a-fixed-delay-not-a-starting-point
-  ;; curl backs off exponentially only when --retry-delay is absent; given
-  ;; one, it waits exactly that long each time.  Multiplying it made
-  ;; `--retry-delay 1 --retry 3' take seven seconds where curl takes three.
-  (with-curlcl-or-skip
-    (let* ((dead (dead-url))
-           (start (get-internal-real-time)))
-      (run-program-capturing (native-namestring-of *curlcl-binary*)
-                             (list "-s" "--retry" "3" "--retry-delay" "1"
-                                   "--retry-connrefused" dead))
-      (let ((elapsed (/ (- (get-internal-real-time) start)
-                        internal-time-units-per-second)))
-        ;; Three fixed one-second waits, not 1+2+4.
-        (is (<= 2.5 elapsed) "the retries did not wait at all")
-        (is (< elapsed 6) "~,1Fs suggests the delay is still being doubled"
-            elapsed)))))
-
-(test --retry-max-time-stops-the-retrying
-  (with-curlcl-or-skip
-    (let* ((dead (dead-url))
-           (start (get-internal-real-time)))
-      (run-program-capturing (native-namestring-of *curlcl-binary*)
-                             (list "-s" "--retry" "20" "--retry-delay" "1"
-                                   "--retry-connrefused" "--retry-max-time" "2"
-                                   dead))
-      (let ((elapsed (/ (- (get-internal-real-time) start)
-                        internal-time-units-per-second)))
-        ;; Twenty retries a second apart, cut off after two seconds.  Generous
-        ;; on the upper bound: the budget bounds when a retry may start, and
-        ;; the attempt that started inside it still finishes.
-        (is (< elapsed 8) "~,1Fs: --retry-max-time did not bound the retrying"
-            elapsed)))))
+(test the-retry-flags-become-the-policy-curl-implies
+  ;; Asserted on the policy rather than by timing the driver.  The timed
+  ;; version passed here and failed on Windows, where connecting to a dead
+  ;; port does not come back refused at once -- it may time out instead, which
+  ;; is a different CURLcode, is retryable by default, and takes as long as it
+  ;; likes.  The policy is the thing that was actually changed, and it is the
+  ;; same on every platform.
+  (flet ((policy (&rest arguments)
+           (let ((command (clingon:parse-command-line
+                           (curlcl/cli::command)
+                           (append arguments (list "http://x/")))))
+             (curlcl/cli::retry-specification command))))
+    ;; curl does not retry a refused connection unless asked, though the
+    ;; library does; the driver subtracts it.
+    (is (not (member :couldnt-connect (getf (policy "--retry" "2") :codes))))
+    (is (member :couldnt-connect
+                (getf (policy "--retry" "2" "--retry-connrefused") :codes)))
+    ;; Still retries what curl retries by default.
+    (is (member :operation-timedout (getf (policy "--retry" "2") :codes)))
+    ;; The sledgehammer.
+    (is (eq t (getf (policy "--retry" "2" "--retry-all-errors") :codes)))
+    ;; --retry-delay is the whole delay, not the first of a doubling series.
+    (let ((fixed (policy "--retry" "3" "--retry-delay" "1")))
+      (is (= 1 (getf fixed :initial-delay)))
+      (is (= 1 (getf fixed :multiplier)))
+      (is (= 0 (getf fixed :jitter))))
+    ;; Without one, curl's own default backoff: start at a second and double.
+    (let ((backoff (policy "--retry" "3")))
+      (is (= 1 (getf backoff :initial-delay)))
+      (is (null (getf backoff :multiplier))))
+    (is (= 5 (getf (policy "--retry" "2" "--retry-max-time" "5") :max-total-time)))
+    (is (null (getf (policy "--retry" "2") :max-total-time)))
+    ;; No --retry at all means no policy, not a policy of one attempt.
+    (is (null (policy)))))
 
 (test limit-rate-accepts-curls-suffixes
   (is (= 1024 (curlcl/cli::parse-rate "1K")))
