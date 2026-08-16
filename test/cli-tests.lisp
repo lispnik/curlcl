@@ -550,7 +550,22 @@ differ for reasons that have nothing to do with what is being tested."
                                        :ignore-error-status t)
                      (values (uiop:read-file-string errors)
                              (parse-integer (uiop:read-file-string status)
-                                            :junk-allowed t)))))))
+                                            :junk-allowed t))))))
+             (piped-version ()
+               ;; -V takes no URL, so it needs its own plumbing; head -c 1
+               ;; closes the pipe on the first byte.
+               (uiop:with-temporary-file (:pathname status)
+                 (uiop:with-temporary-file (:pathname errors)
+                   (uiop:run-program
+                    (list "/bin/sh" "-c"
+                          (format nil "{ ~A -V 2>~A; echo $? > ~A; } | head -c 1 >/dev/null"
+                                  (native-namestring-of *curlcl-binary*)
+                                  (uiop:native-namestring errors)
+                                  (uiop:native-namestring status)))
+                    :output nil :error-output nil :ignore-error-status t)
+                   (values (uiop:read-file-string errors)
+                           (parse-integer (uiop:read-file-string status)
+                                          :junk-allowed t))))))
         ;; The exit code is what a script sees, and it is curl's.
         (multiple-value-bind (output code) (piped)
           (declare (ignore output))
@@ -566,7 +581,15 @@ differ for reasons that have nothing to do with what is being tested."
         (multiple-value-bind (output code) (piped "-s")
           (is (= 56 code))
           (is (zerop (length (string-trim '(#\Space #\Newline) output)))
-              "-s should have suppressed ~S" output)))))))
+              "-s should have suppressed ~S" output))
+        ;; -V is not a transfer, and curl exits 0 without a word when its
+        ;; output is cut short.  Untested at first, and it regressed at once:
+        ;; swallowing the write error left the bytes in the buffer, and the
+        ;; flush on the way out met the same closed pipe and reported 56.
+        (multiple-value-bind (output code) (piped-version)
+          (is (eql 0 code) "curlcl -V into a closed pipe should exit 0 as curl does")
+          (is (zerop (length (string-trim '(#\Space #\Newline) output)))
+              "curlcl -V should say nothing about a closed pipe, said ~S" output)))))))
 
 (test a-websocket-url-is-recognised-by-its-scheme
   ;; Deliberately NOT wrapped in WITH-WEBSOCKETS-OR-SKIP.  Recognising the

@@ -26,7 +26,7 @@
 (in-package #:curlcl/cli)
 
 (defparameter *program-name* "curlcl")
-(defparameter *program-version* "0.1.1")
+(defparameter *program-version* "0.1.2")
 
 (defvar *quiet* nil
   "True when -s was given without -S.
@@ -1232,9 +1232,16 @@ the condition."
     ;; A closed pipe here is `curlcl -V | head', which curl treats as nothing
     ;; at all: it exits 0 and says nothing.  There is no transfer to report a
     ;; failure about, so neither do we.
-    (handler-case (print-curl-version)
+    ;;
+    ;; The flush belongs inside the handler, and leaving on the spot matters.
+    ;; Swallowing the write error alone is not enough: the bytes are still sat
+    ;; in the buffer, and WITH-WRITE-FAILURES-REPORTED's own flush meets the
+    ;; same closed pipe on the way out and reports 56 after all.
+    (handler-case (progn (print-curl-version)
+                         (finish-output *standard-output*))
       (stream-error (condition)
-        (unless (write-failure-p condition) (error condition))))
+        (unless (write-failure-p condition) (error condition))
+        (uiop:quit 0 nil)))
     (clingon:exit 0))
   (let ((urls (clingon:command-arguments command)))
     (when (null urls)
