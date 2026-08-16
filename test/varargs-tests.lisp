@@ -152,18 +152,40 @@
       ;; No transfer has run, so it must be exactly 0 -- not uninitialised.
       (is (= 0 code)))))
 
-(test cifs-are-prepared-for-every-trailing-type
-  ;; Three trailing argument types exist across the whole libcurl API; if one
-  ;; were missing, the first call needing it would fail at runtime rather than
-  ;; at load.
-  (is (= 3 (hash-table-count curlcl::*variadic-cifs*)))
-  (dolist (type '(:pointer :long :int64))
-    (is (not (null (gethash type curlcl::*variadic-cifs*)))
-        "no prepared cif for trailing type ~S" type)))
+(test a-variadic-argument-arrives-and-a-fixed-one-does-not
+  ;; The measurement the whole file exists for, made both ways so that it
+  ;; proves something.  CURLOPT_MAXFILESIZE_LARGE is positive as 64 bits and
+  ;; negative in its low 32, and libcurl refuses a negative size with
+  ;; CURLE_BAD_FUNCTION_ARGUMENT -- so whether the value arrived is visible in
+  ;; the return code.
+  (with-raw-handle (h)
+    (let ((good #x180000000) (bad -1))
+      ;; Through the variadic call, libcurl sees what it was given.
+      (is (= 0 (curlcl::%setopt-off-t h +opt-maxfilesize-large+ good)))
+      (is (= 43 (curlcl::%setopt-off-t h +opt-maxfilesize-large+ bad))
+          "a negative size was not rejected, so the value never reached libcurl")
+      ;; And through an ordinary fixed-signature call it does not -- on Darwin
+      ;; arm64.  Asserted so that the test above cannot quietly stop proving
+      ;; anything: if this ever starts rejecting too, the platform has changed
+      ;; and the check needs rethinking rather than deleting.
+      #+(and darwin arm64)
+      (is (= 0 (cffi:foreign-funcall "curl_easy_setopt"
+                                     :pointer h :int +opt-maxfilesize-large+
+                                     :int64 bad :int))
+          "a fixed-signature call rejected -1, so this platform no longer ~
+mis-passes variadic arguments and the variadic call is no longer load-bearing"))))
 
-(test variadic-entry-points-resolved
-  (dolist (symbol '(curlcl::*setopt-function* curlcl::*getinfo-function*
-                    curlcl::*multi-setopt-function* curlcl::*share-setopt-function*))
-    (let ((pointer (symbol-value symbol)))
-      (is (not (null pointer)) "~S is NIL" symbol)
-      (is (not (cffi:null-pointer-p pointer)) "~S is a null pointer" symbol))))
+(test the-load-time-check-would-catch-a-broken-variadic-call
+  ;; It runs at load, so reaching here at all means it passed; this asserts it
+  ;; is not vacuous -- that it really does compare what went in with what came
+  ;; back, and would signal rather than shrug.
+  (finishes (curlcl::%check-variadic-passing))
+  (with-raw-handle (h)
+    (let ((token (cffi:make-pointer #x5EEDC0DE)))
+      (curlcl::%setopt-pointer h curlcl::+curlopt-private+ token)
+      (cffi:with-foreign-object (out :pointer)
+        (setf (cffi:mem-ref out :pointer) (cffi:null-pointer))
+        (curlcl::%getinfo h curlcl::+curlinfo-private+ out)
+        (is (cffi:pointer-eq token (cffi:mem-ref out :pointer))
+            "CURLOPT_PRIVATE did not round-trip, which is what the load-time ~
+check tests")))))

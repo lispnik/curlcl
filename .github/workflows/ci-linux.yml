@@ -7,7 +7,7 @@
 #
 # What this one is for: libcurl's setopt/getinfo are variadic, and x86-64
 # SysV passes a variadic argument in registers where Darwin arm64 passes it
-# on the stack.  macOS is what proves the libffi path in src/varargs.lisp is
+# on the stack.  macOS is what proves the variadic path in src/varargs.lisp is
 # necessary at all; this job proves it did not break the case that would have
 # worked without it.
 
@@ -29,8 +29,9 @@ jobs:
       - name: Install SBCL and libcurl
         run: |
           sudo apt-get update
-          # libffi-dev and pkg-config are for cffi-libffi's grovel step.
-          sudo apt-get install -y sbcl libcurl4-openssl-dev libffi-dev pkg-config
+          # No libffi-dev or pkg-config: nothing here is groveled or compiled,
+          # so the build needs no C toolchain at all.
+          sudo apt-get install -y sbcl libcurl4-openssl-dev
 
       - name: Install and configure ocicl
         run: |
@@ -77,7 +78,7 @@ jobs:
 
       # The binary this run actually tested, kept so a change can be tried
       # without a local Lisp toolchain.  Not a release: it is bare, so it
-      # needs libcurl and libffi already on the machine, and it expires.
+      # needs libcurl already on the machine, and it expires.
       # release.yml is the one that bundles and publishes.
       - name: Upload the binary
         uses: actions/upload-artifact@v4

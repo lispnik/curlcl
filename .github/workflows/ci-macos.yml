@@ -8,7 +8,7 @@
 # What this one is for: libcurl's setopt/getinfo are variadic, and Darwin
 # arm64 passes a variadic argument on the stack where x86-64 SysV passes it
 # in a register.  An ordinary CFFI call therefore hands libcurl garbage here
-# and works on Linux, so this is the job that proves the libffi path in
+# and works on Linux, so this is the job that proves the variadic path in
 # src/varargs.lisp is doing something.  It also picks up whichever libcurl
 # the runner resolves -- Homebrew's or the older one in the dyld shared
 # cache -- which decides whether the websocket suite runs or skips.

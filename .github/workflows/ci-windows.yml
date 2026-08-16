@@ -6,11 +6,12 @@
 # badges in README.md mean what they appear to mean.
 #
 # Windows runs the same suite as the Unix workflows, but everything around it
-# differs: SBCL comes from Chocolatey, the C toolchain and libffi and libcurl
-# from MSYS2, and the steps are PowerShell.  What it catches is real --
-# curl_socket_t is a different width here, standard output is a handle rather
-# than a descriptor, and CRLF checkouts break FORMAT's line-continuation
-# directive.
+# differs: SBCL comes from Chocolatey, libcurl from MSYS2, and the steps are
+# PowerShell.  No C toolchain is needed now that cffi-libffi has gone.
+#
+# What it catches is real -- curl_socket_t is a different width here, standard
+# output is a handle rather than a descriptor, and CRLF checkouts break
+# FORMAT's line-continuation directive.
 
 name: Windows
 
@@ -36,10 +37,7 @@ jobs:
           msystem: MINGW64
           update: false
           install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-libffi
             mingw-w64-x86_64-curl
-            mingw-w64-x86_64-pkg-config
 
       - name: Put the MinGW toolchain and DLLs on PATH
         shell: pwsh
@@ -51,8 +49,6 @@ jobs:
         shell: pwsh
         run: |
           sbcl --version
-          gcc --version
-          pkg-config --modversion libffi
           Get-ChildItem D:\a\_temp\msys64\mingw64\bin\libcurl*.dll
 
       - name: Install and configure ocicl

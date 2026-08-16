@@ -78,6 +78,15 @@ package → conditions → library → types → varargs → easy-raw → memory
   by testing on Linux. Use `%setopt-long`, `%setopt-pointer`, `%setopt-off-t`
   and `%getinfo` from `src/varargs.lisp`.
 
+  Those now call `cffi:foreign-funcall-varargs` rather than preparing libffi
+  cifs by hand; CFFI could not express a variadic call when this was written
+  and can now, and dropping `cffi-libffi` removed the only reason this project
+  needed a C toolchain to build. The hazard is unchanged, so the rule is
+  unchanged — `%check-variadic-passing` runs at load and signals if a value
+  handed to a variadic argument does not come back, because an SBCL too old to
+  accept `&optional` in an alien signature would otherwise mis-pass every
+  option in silence.
+
 - **For anything with a wire format curl already defines, diff against curl.**
   `curlcl` is a curl workalike, so "what should this send?" has an authority,
   and it is not our reading of the RFC. `--data-urlencode` shipped `%20` where

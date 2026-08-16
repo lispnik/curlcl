@@ -10,7 +10,7 @@
 #            dumps carries an absolute reference to /opt/homebrew/.../libzstd.
 #            On a Mac without Homebrew, dyld fails before any Lisp runs.
 #   Linux    the same, for whatever libzstd the distribution's SBCL linked.
-#   Windows  libcurl and libffi come from MSYS2 and are not on a normal machine.
+#   Windows  libcurl comes from MSYS2 and is not on a normal machine.
 #
 # So each target bundles what it needs and then *proves* it, by running the
 # unpacked archive with the build toolchain taken away.  A missing dependency
@@ -67,7 +67,7 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update
-            sudo apt-get install -y sbcl libcurl4-openssl-dev libffi-dev pkg-config
+            sudo apt-get install -y sbcl libcurl4-openssl-dev
           else
             brew install sbcl curl
           fi
@@ -252,10 +252,7 @@ jobs:
           msystem: MINGW64
           update: false
           install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-libffi
             mingw-w64-x86_64-curl
-            mingw-w64-x86_64-pkg-config
 
       - name: Put the MinGW toolchain and DLLs on PATH
         shell: pwsh
@@ -299,7 +296,7 @@ jobs:
           fi
 
       # curlcl.exe does not link libcurl -- it opens it at runtime -- so the
-      # DLL closure has to be taken from libcurl and libffi as well as from the
+      # DLL closure has to be taken from libcurl as well as from the
       # executable, or the archive would be missing exactly the libraries the
       # binding goes looking for.
       - name: Bundle the MSYS2 DLLs
@@ -323,12 +320,12 @@ jobs:
           # LIBRARY-NOT-FOUND with the library sitting right beside it, while
           # on a full PATH it succeeded by finding some unrelated libcurl.dll.
           # src/library.lisp searches for the MinGW name now.
-          for start in "$stage"/bin/curlcl.exe /mingw64/bin/libcurl*.dll /mingw64/bin/libffi*.dll; do
+          for start in "$stage"/bin/curlcl.exe /mingw64/bin/libcurl*.dll; do
             [ -e "$start" ] || continue
             # The seed itself as well as what it pulls in.  Listing only the
-            # dependencies is the obvious mistake and leaves out libffi-8.dll
-            # and libcurl-4.dll themselves -- the two the binding dlopens by
-            # name, so nothing links them and nothing else drags them in.
+            # dependencies is the obvious mistake and leaves out
+            # libcurl-4.dll itself -- the binding dlopens it by name, so
+            # nothing links it and nothing else drags it in.
             case "$start" in /mingw64/bin/*) echo "$start" ;; esac
             ldd "$start" | awk '{print $3}' | grep -i '/mingw64/bin/' || true
           done | sort -u | while read -r dll; do

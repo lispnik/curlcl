@@ -19,11 +19,13 @@ CFFI call puts the third argument in a register. libcurl then reads the stack
 and gets whatever was there: no crash, no error code, the option simply takes
 a garbage value. On x86-64 the same wrong call happens to work, which is
 exactly why the bug hides. Every option and info call therefore goes through
-libffi's `ffi_prep_cif_var`, with the three cifs it needs prepared once at load
-time. The test for it does not check that `setopt` returned `CURLE_OK` — that
-proves nothing — but that `CURLOPT_HTTP_VERSION` still sorts its sparse
-accepted set `{0–5, 30, 31}` from the gaps and from negatives into three
-different outcomes.
+CFFI's `foreign-funcall-varargs`, which says which arguments are variadic and
+so gets them passed where libcurl looks; and the binding proves at load time
+that a value handed to a variadic argument arrives, because that failure would
+otherwise be silent. The test for it does not check that `setopt` returned
+`CURLE_OK` — that proves nothing — but that `CURLOPT_HTTP_VERSION` still sorts
+its sparse accepted set `{0–5, 30, 31}` from the gaps and from negatives into
+three different outcomes.
 
 **A Lisp condition must never unwind through a C frame.** Signalling out of a
 write callback is undefined behaviour, but so is swallowing the error. So a
@@ -53,9 +55,10 @@ Then:
 (asdf:load-system :curlcl)
 ```
 
-Needs libcurl and `cffi-libffi`. On macOS the binding prefers Homebrew's
-libcurl over the one in the dyld shared cache, because the system build has no
-websocket support; set `LIBCURL_LIBRARY` to pin a specific one.
+Needs libcurl. Nothing here is groveled or compiled, so no C toolchain is
+required to build it. On macOS the binding prefers Homebrew's libcurl over the
+one in the dyld shared cache, because the system build has no websocket
+support; set `LIBCURL_LIBRARY` to pin a specific one.
 
 **libcurl 7.83 or newer.** The client reads response headers through
 `curl_easy_header`/`curl_easy_nextheader`, which arrived in 7.83, and unlike
@@ -424,9 +427,11 @@ it was first tried:
 - **Standard descriptors.** SBCL on Windows keeps an OS handle where Unix keeps
   a descriptor, so `curlcl` could not write a response body until it stopped
   assuming 1 meant standard output.
-- **`cffi-libffi`**, which needs a C toolchain and libffi. MSYS2's MinGW-w64
-  packages supply both; this was the part expected to be the obstacle, and it
-  was the one thing that worked first time.
+- **`cffi-libffi`**, which needed a C toolchain and libffi. MSYS2's MinGW-w64
+  packages supplied both; this was the part expected to be the obstacle, and it
+  was the one thing that worked first time. It is no longer a dependency —
+  CFFI's own `foreign-funcall-varargs` does the job — so Windows now needs
+  nothing from MSYS2 but libcurl itself.
 
 C `long` is 4 bytes on Windows and 8 on LP64 Unix. The binding passes CFFI's
 `:LONG`, which already tracks that, so nothing needed changing — but the test

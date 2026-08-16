@@ -23,9 +23,10 @@ through the condition system.
 
 Two things distinguish it.  First, curl_easy_setopt and its siblings are
 genuine variadic functions, and under the Darwin arm64 ABI variadic arguments
-are passed on the stack rather than in registers, so an ordinary CFFI call
-silently hands libcurl garbage; every option and info call therefore goes
-through libffi's ffi_prep_cif_var with cifs prepared once at load time.
+are passed on the stack rather than in registers, so an ordinary fixed-signature
+call silently hands libcurl garbage; every option and info call therefore goes
+through CFFI's FOREIGN-FUNCALL-VARARGS, and the binding proves at load time
+that a value handed to a variadic argument actually arrives.
 Second, callbacks are safe: a Lisp condition signalled inside a write, read or
 progress callback can never unwind into C.  It is caught at the boundary, the
 callback returns the abort sentinel libcurl expects for that particular
@@ -41,16 +42,17 @@ generic CURLE_WRITE_ERROR."
   :source-control (:git "https://github.com/lispnik/curlcl.git")
   :bug-tracker "https://github.com/lispnik/curlcl/issues"
   :serial t
-  ;; cffi-libffi is not optional: it is what makes the variadic setopt/getinfo
-  ;; calls correct on stack-passing ABIs.  See src/varargs.lisp.
-  :depends-on (#:cffi #:cffi-libffi #:alexandria #:bordeaux-threads)
+  ;; No cffi-libffi, and so no C toolchain needed to build this: CFFI's own
+  ;; FOREIGN-FUNCALL-VARARGS makes the variadic setopt/getinfo calls correctly
+  ;; on stack-passing ABIs.  See src/varargs.lisp.
+  :depends-on (#:cffi #:alexandria #:bordeaux-threads)
   :components ((:module "src"
                 :serial t
                 :components ((:file "package")
                              (:file "conditions") ; no foreign calls: pure classes
                              (:file "library")    ; loading, version, features, global init
                              (:file "types")      ; ctypes, enums, structs
-                             (:file "varargs")    ; the libffi variadic call layer
+                             (:file "varargs")    ; the variadic call layer
                              (:file "easy-raw")   ; raw bindings + option introspection
                              (:file "memory")     ; owned foreign memory, octets
                              (:file "options")
@@ -95,9 +97,8 @@ convenient to expose."
   :components ((:module "src"
                 :components ((:file "cli"))))
   ;; Build with (asdf:make :curlcl/cli), producing bin/curlcl.  The dumped
-  ;; image reopens libcurl and re-prepares the libffi cifs through the restore
-  ;; hooks in src/library.lisp and src/varargs.lisp; without those the binary
-  ;; would start with a stale library handle and mis-pass every option.
+  ;; image reopens libcurl through the restore hook in src/library.lisp;
+  ;; without it the binary would start with a stale library handle.
   :build-operation "program-op"
   :build-pathname "bin/curlcl"
   :entry-point "curlcl/cli:main")

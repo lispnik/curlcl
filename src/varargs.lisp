@@ -8,178 +8,128 @@
 ;;;;   x86-64 SysV  variadic args go in registers, the same place a fixed
 ;;;;                third argument would go -- so a plain CFFI call happens
 ;;;;                to work, which is exactly why this bug goes unnoticed.
-;;;;   Darwin arm64 variadic args go on the STACK.  A plain CFFI call puts
-;;;;                the value in x2, libcurl reads the stack, and gets
-;;;;                whatever was there.  No crash, no error -- setting a URL
-;;;;                simply does not take, or takes garbage.
+;;;;   AArch64      the standard procedure call standard does the same, which
+;;;;                is why Linux on arm64 is not affected either.
+;;;;   Darwin arm64 variadic args go on the STACK.  A plain fixed-signature
+;;;;                call puts the value in x2, libcurl reads the stack, and
+;;;;                gets whatever was there.  No crash, no error -- setting an
+;;;;                option simply does not take, or takes garbage.
 ;;;;
-;;;; So every one of these calls goes through libffi's ffi_prep_cif_var, which
-;;;; is the only portable way to say "two fixed arguments, one variadic".  CFFI
-;;;; itself cannot express this: DEFCFUN has no variadic support, and
-;;;; FOREIGN-FUNCALL builds a fixed signature.
+;;;; The hazard is entirely real and easy to demonstrate: setting
+;;;; CURLOPT_MAXFILESIZE_LARGE to -1 through an ordinary CFFI:FOREIGN-FUNCALL
+;;;; returns CURLE_OK on an Apple Silicon Mac, where libcurl would answer
+;;;; CURLE_BAD_FUNCTION_ARGUMENT had it actually seen the -1.
 ;;;;
-;;;; The machinery is reused from cffi-libffi rather than re-groveled: it
-;;;; already loads libffi, knows the ffi_cif layout, and can build ffi_type
-;;;; descriptors.  Those are internal symbols, which makes this file the most
-;;;; version-coupled part of the library -- hence %CHECK-LIBFFI-BINDINGS below,
-;;;; so a CFFI upgrade that moves them fails loudly at load time instead of
-;;;; silently mis-passing arguments.
+;;;; What handles it is CFFI's FOREIGN-FUNCALL-VARARGS, which says "these
+;;;; arguments are fixed and these are variadic" and whose SBCL backend splices
+;;;; &optional into the alien signature on Darwin arm64 -- SBCL's way of
+;;;; declaring a genuinely variadic alien call, so the compiler emits stack
+;;;; passing.  This file used to reach into cffi-libffi and prepare cifs with
+;;;; ffi_prep_cif_var by hand, because CFFI had no way to express it; it does
+;;;; now, and dropping that removed the binding's only need for a C toolchain
+;;;; at build time along with its most version-coupled code.
 ;;;;
-;;;; Only three trailing argument types exist across the whole API (a pointer,
-;;;; a long, or a curl_off_t), and getinfo's out-parameter is always a pointer,
-;;;; so three cifs are prepared once and shared.  A cif is read-only during
-;;;; ffi_call, so sharing them across threads is safe.
+;;;; The functions are called by name rather than through saved pointers, so
+;;;; nothing here has to be rebuilt after an image dump: SBCL re-resolves an
+;;;; :extern symbol through the linkage table at startup, where a saved
+;;;; pointer would refer to a library reopened at a different address.
 
 (in-package #:curlcl)
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (defun %check-libffi-bindings ()
-    "Verify the cffi-libffi internals this file depends on still exist."
-    (let ((missing
-            (remove-if (lambda (spec)
-                         (destructuring-bind (kind symbol) spec
-                           (ecase kind
-                             (:function (fboundp symbol))
-                             (:type (ignore-errors
-                                     (cffi::parse-type symbol) t)))))
-                       '((:function cffi::libffi/call)
-                         (:function cffi::make-libffi-type-descriptor)
-                         (:function cffi::parse-type)
-                         (:type (:struct cffi::ffi-cif))))))
-      (when missing
-        (error "This libcurl binding calls variadic libcurl functions through ~
-cffi-libffi's internals, and the following are missing from the CFFI in use: ~
-~{~S~^, ~}.  See src/varargs.lisp." missing))))
-  (%check-libffi-bindings))
-
-;;; ffi_prep_cif_var is the one piece cffi-libffi does not surface: it binds
-;;; ffi_prep_cif (all-fixed) and ffi_call, but not the variadic preparer.
-(cffi:defcfun ("ffi_prep_cif_var" %ffi-prep-cif-var) cffi::status
-  (cif :pointer)
-  (abi cffi::abi)
-  (nfixed :uint)
-  (ntotal :uint)
-  (rtype :pointer)
-  (atypes :pointer))
-
-(defun %ffi-type (type)
-  "The static ffi_type* describing TYPE.  Built-ins return libffi's globals."
-  (cffi::make-libffi-type-descriptor (cffi::parse-type type)))
-
-(defun %prepare-variadic-cif (arg-type)
-  "Prepare a cif for `int f(void *, int, ARG-TYPE)' with the last arg variadic.
-
-The cif and its type array are allocated for the lifetime of the image on
-purpose: there are exactly three of them and they are shared by every option
-call the process ever makes."
-  (let ((cif (cffi:foreign-alloc '(:struct cffi::ffi-cif)))
-        (atypes (cffi:foreign-alloc :pointer :count 3)))
-    (setf (cffi:mem-aref atypes :pointer 0) (%ffi-type :pointer)   ; the handle
-          (cffi:mem-aref atypes :pointer 1) (%ffi-type :int)       ; the option
-          (cffi:mem-aref atypes :pointer 2) (%ffi-type arg-type))  ; variadic
-    (let ((status (%ffi-prep-cif-var cif :default-abi
-                                     2 3          ; 2 fixed, 3 total
-                                     (%ffi-type :int) atypes)))
-      (unless (eq status :ok)
-        (error "ffi_prep_cif_var failed for trailing type ~S: ~S" arg-type status)))
-    cif))
-
-(defvar *variadic-cifs* (make-hash-table :test 'eq)
-  "Trailing argument type -> prepared ffi_cif.  Populated once at load time.")
-
-(defun %variadic-cif (arg-type)
-  (or (gethash arg-type *variadic-cifs*)
-      (error "No prepared cif for trailing argument type ~S." arg-type)))
-
-(defun %initialize-variadic-cifs ()
-  (clrhash *variadic-cifs*)
-  (dolist (type '(:pointer :long :int64))
-    (setf (gethash type *variadic-cifs*) (%prepare-variadic-cif type))))
-
-(defvar *setopt-function* nil)
-(defvar *getinfo-function* nil)
-(defvar *multi-setopt-function* nil)
-(defvar *share-setopt-function* nil)
-
-(defun %initialize-variadic-functions ()
-  (setf *setopt-function* (cffi:foreign-symbol-pointer "curl_easy_setopt")
-        *getinfo-function* (cffi:foreign-symbol-pointer "curl_easy_getinfo")
-        *multi-setopt-function* (cffi:foreign-symbol-pointer "curl_multi_setopt")
-        *share-setopt-function* (cffi:foreign-symbol-pointer "curl_share_setopt"))
-  (dolist (entry (list (cons "curl_easy_setopt" *setopt-function*)
-                       (cons "curl_easy_getinfo" *getinfo-function*)
-                       (cons "curl_multi_setopt" *multi-setopt-function*)
-                       (cons "curl_share_setopt" *share-setopt-function*)))
-    (when (or (null (cdr entry)) (cffi:null-pointer-p (cdr entry)))
-      (error "Could not resolve ~A in the loaded libcurl." (car entry)))))
-
-(defun %call-variadic (function handle option value arg-type)
-  "Call FUNCTION(HANDLE, OPTION, VALUE) with VALUE passed variadically.
-
-ARG-TYPE is the CFFI type of the trailing argument and selects the prepared
-cif.  Returns the int result, which the caller decodes as the appropriate
-CURL*code."
-  (let ((cif (%variadic-cif arg-type)))
-    ;; One 8-byte slot serves all three trailing types on every platform we
-    ;; support, so the value buffer does not have to vary with ARG-TYPE; the
-    ;; MEM-REF below writes it at its natural width.  RVALUE is 8 bytes because
-    ;; libffi widens integer returns to ffi_arg.
-    (cffi:with-foreign-objects ((avalues :pointer 3)
-                                (rvalue :int64)
-                                (a-handle :pointer)
-                                (a-option :int)
-                                (a-value :int64))
-      (setf (cffi:mem-ref a-handle :pointer) handle
-            (cffi:mem-ref a-option :int) option
-            (cffi:mem-ref a-value arg-type) value
-            (cffi:mem-aref avalues :pointer 0) a-handle
-            (cffi:mem-aref avalues :pointer 1) a-option
-            (cffi:mem-aref avalues :pointer 2) a-value)
-      (cffi::libffi/call cif function rvalue avalues)
-      (cffi:mem-ref rvalue :int))))
-
-;;; The typed entry points.  Everything above is private; these are what the
-;;; option and info layers call.
+;;; The typed entry points.  These are what the option and info layers call,
+;;; and which of them is used is decided by the option's spelled type -- see
+;;; src/options.lisp.
 
 (defun %setopt-pointer (handle option value)
-  (%call-variadic *setopt-function* handle option value :pointer))
+  (cffi:foreign-funcall-varargs "curl_easy_setopt"
+                                (:pointer handle :int option)
+                                :pointer value :int))
 
 (defun %setopt-long (handle option value)
-  (%call-variadic *setopt-function* handle option value :long))
+  (cffi:foreign-funcall-varargs "curl_easy_setopt"
+                                (:pointer handle :int option)
+                                :long value :int))
 
 (defun %setopt-off-t (handle option value)
-  (%call-variadic *setopt-function* handle option value :int64))
+  (cffi:foreign-funcall-varargs "curl_easy_setopt"
+                                (:pointer handle :int option)
+                                :int64 value :int))
 
 (defun %getinfo (handle info out-pointer)
   "Call curl_easy_getinfo(HANDLE, INFO, OUT-POINTER).
 
-The trailing argument is always a pointer to caller-allocated storage, so this
-shares the :POINTER cif.  Allocating storage of the wrong width for the info's
-type corrupts adjacent memory -- see the info table for the per-type widths."
-  (%call-variadic *getinfo-function* handle info out-pointer :pointer))
+The trailing argument is always a pointer to caller-allocated storage.
+Allocating storage of the wrong width for the info's type corrupts adjacent
+memory -- see the info table for the per-type widths."
+  (cffi:foreign-funcall-varargs "curl_easy_getinfo"
+                                (:pointer handle :int info)
+                                :pointer out-pointer :int))
 
 (defun %multi-setopt-pointer (handle option value)
-  (%call-variadic *multi-setopt-function* handle option value :pointer))
+  (cffi:foreign-funcall-varargs "curl_multi_setopt"
+                                (:pointer handle :int option)
+                                :pointer value :int))
 
 (defun %multi-setopt-long (handle option value)
-  (%call-variadic *multi-setopt-function* handle option value :long))
+  (cffi:foreign-funcall-varargs "curl_multi_setopt"
+                                (:pointer handle :int option)
+                                :long value :int))
 
 (defun %multi-setopt-off-t (handle option value)
-  (%call-variadic *multi-setopt-function* handle option value :int64))
+  (cffi:foreign-funcall-varargs "curl_multi_setopt"
+                                (:pointer handle :int option)
+                                :int64 value :int))
 
 (defun %share-setopt-pointer (handle option value)
-  (%call-variadic *share-setopt-function* handle option value :pointer))
+  (cffi:foreign-funcall-varargs "curl_share_setopt"
+                                (:pointer handle :int option)
+                                :pointer value :int))
 
 (defun %share-setopt-long (handle option value)
-  (%call-variadic *share-setopt-function* handle option value :long))
+  (cffi:foreign-funcall-varargs "curl_share_setopt"
+                                (:pointer handle :int option)
+                                :long value :int))
 
-;;; Prepared state does not survive an image dump: the cifs point at foreign
-;;; memory and the function pointers at a library that will be reopened at a
-;;; different address.
-(defun %reinitialize-varargs ()
-  (%initialize-variadic-cifs)
-  (%initialize-variadic-functions))
+;;; Proving it at load time.
+;;;
+;;; The failure this guards against is silent -- every option quietly taking a
+;;; wrong value -- so it must not be left to a test suite a downstream user
+;;; never runs.  The check that used to live here verified that cffi-libffi's
+;;; internals were where we expected; this one verifies the thing that
+;;; actually matters, which is that a value handed to a variadic argument
+;;; arrives.
+;;;
+;;; A round trip rather than a rejection: CURLOPT_PRIVATE stores a pointer and
+;;; CURLINFO_PRIVATE hands it back, so this asks only that libcurl keep what it
+;;; was given.  Asserting instead that some invalid value is refused would tie
+;;; the library's ability to load to libcurl's validation of one option, and
+;;; break the day that changed.  The two constants are written out because the
+;;; option and info tables load after this file.
 
-(uiop:register-image-restore-hook '%reinitialize-varargs nil)
+(defconstant +curlopt-private+ 10103)
+(defconstant +curlinfo-private+ #x100015)
 
-(%reinitialize-varargs)
+(defun %check-variadic-passing ()
+  "Signal unless a variadic argument reaches libcurl intact."
+  (let ((handle (cffi:foreign-funcall "curl_easy_init" :pointer)))
+    (when (cffi:null-pointer-p handle)
+      (error 'curl-error
+             :message "curl_easy_init returned NULL while checking variadic ~
+argument passing"))
+    (unwind-protect
+         (let ((token (cffi:make-pointer #x5EEDC0DE)))
+           (%setopt-pointer handle +curlopt-private+ token)
+           (cffi:with-foreign-object (out :pointer)
+             (setf (cffi:mem-ref out :pointer) (cffi:null-pointer))
+             (%getinfo handle +curlinfo-private+ out)
+             (let ((returned (cffi:mem-ref out :pointer)))
+               (unless (cffi:pointer-eq returned token)
+                 (error "Variadic arguments are not reaching libcurl: stored ~
+~A in CURLOPT_PRIVATE and read back ~A.  Every option set through this binding ~
+would take a wrong value silently.  This means CFFI's FOREIGN-FUNCALL-VARARGS ~
+is not making a true variadic call on this platform -- most likely an SBCL too ~
+old to accept &optional in an alien signature.  See src/varargs.lisp."
+                        token returned)))))
+      (cffi:foreign-funcall "curl_easy_cleanup" :pointer handle :void))))
+
+(%check-variadic-passing)
