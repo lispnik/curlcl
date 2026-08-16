@@ -41,6 +41,8 @@ function pointers are unnecessary here, and the read path takes no lock.
 
 ## Installation
 
+As a library:
+
 ```
 ocicl install
 ```
@@ -54,6 +56,22 @@ Then:
 Needs libcurl and `cffi-libffi`. On macOS the binding prefers Homebrew's
 libcurl over the one in the dyld shared cache, because the system build has no
 websocket support; set `LIBCURL_LIBRARY` to pin a specific one.
+
+Just the `curlcl` command, with no Lisp toolchain — on macOS, which also pulls
+in a libcurl that can speak `ws://`:
+
+```
+brew tap lispnik/curlcl
+brew install curlcl
+```
+
+Or take a binary from [the releases](https://github.com/lispnik/curlcl/releases),
+built for Linux and macOS on both architectures and for Windows on x86-64.
+Unpack it and put `curlcl` on your `PATH`; the archives carry the libraries
+that are not part of a stock system. libcurl itself is *not* among them, on
+purpose — curlcl opens it at startup rather than linking it, so it uses the one
+already on your machine and gets that build's capabilities. `curlcl -V` prints
+which library it found and what that library can speak.
 
 ## Usage
 

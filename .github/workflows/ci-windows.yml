@@ -109,3 +109,15 @@ jobs:
             --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' `
             --eval '(asdf:load-system :curlcl/test)' `
             --eval '(uiop:quit (if (curlcl/test:run-tests) 0 1))'
+
+      # The binary this run actually tested, kept so a change can be tried
+      # without a local Lisp toolchain.  Not a release: it needs the MSYS2
+      # DLLs that are not in this archive, and it expires.  release.yml is
+      # the one that bundles and publishes.
+      - name: Upload the binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: curlcl-windows-x86_64-${{ github.sha }}
+          path: bin/curlcl.exe
+          if-no-files-found: error
+          retention-days: 14

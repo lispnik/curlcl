@@ -1,0 +1,370 @@
+# Builds a publishable curlcl for each platform and attaches them to a release.
+#
+# Separate from the three ci-*.yml workflows on purpose: those are the test
+# signal and own the badges, and they upload the bare binary they tested.  This
+# one is about producing something a stranger can download and run, which is a
+# different job -- the binary is not self-contained, and what it is missing
+# differs per platform:
+#
+#   macOS    Homebrew's SBCL is built with core compression, so every image it
+#            dumps carries an absolute reference to /opt/homebrew/.../libzstd.
+#            On a Mac without Homebrew, dyld fails before any Lisp runs.
+#   Linux    the same, for whatever libzstd the distribution's SBCL linked.
+#   Windows  libcurl and libffi come from MSYS2 and are not on a normal machine.
+#
+# So each target bundles what it needs and then *proves* it, by running the
+# unpacked archive with the build toolchain taken away.  A missing dependency
+# has to fail the build rather than the person who downloads it.
+#
+# libcurl itself is deliberately not bundled.  The binding closes it before
+# dumping and reopens it at startup from a search list, so the archive runs
+# against whatever libcurl the machine has -- with that build's capabilities,
+# which is why the release notes say to install a recent one for websockets.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # For rehearsing the whole thing on a branch before committing to a tag.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  unix:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: macos-arm64
+            runner: macos-latest
+          - target: macos-x86_64
+            runner: macos-13
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Work out the version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install SBCL and libcurl
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update
+            sudo apt-get install -y sbcl libcurl4-openssl-dev libffi-dev pkg-config
+          else
+            brew install sbcl curl
+          fi
+
+      - name: Install and configure ocicl
+        run: |
+          git clone --depth 1 https://github.com/ocicl/ocicl.git "$HOME/ocicl-src"
+          ( cd "$HOME/ocicl-src" && sbcl --non-interactive --load setup.lisp )
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Restore dependencies
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          ocicl setup
+          ocicl install
+
+      - name: Build
+        run: |
+          sbcl --non-interactive \
+            --load "$HOME/.local/share/ocicl/ocicl-runtime.lisp" \
+            --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' \
+            --eval '(asdf:make :curlcl/cli)'
+          ./bin/curlcl -V
+
+      # The tag names the release, but the version the binary reports is
+      # hand-maintained in src/cli.lisp and curlcl.asd.  Catch them drifting
+      # here rather than shipping a v0.2.0 that calls itself 0.1.0.
+      - name: Check the binary agrees with the tag
+        if: github.ref_type == 'tag'
+        run: |
+          reported=$(./bin/curlcl -V | head -1 | awk '{print $2}')
+          if [ "$reported" != "${{ steps.version.outputs.version }}" ]; then
+            echo "tag says ${{ steps.version.outputs.version }}, binary says $reported"
+            echo "update *program-version* in src/cli.lisp and :version in curlcl.asd"
+            exit 1
+          fi
+
+      # The binary is not editable, which decides the shape of everything here.
+      # SBCL appends the Lisp core to the end of the executable file, past the
+      # end of the Mach-O or ELF proper, and both install_name_tool and patchelf
+      # refuse to touch the result -- install_name_tool says "the __LINKEDIT
+      # segment does not cover the end of the file", and codesign then calls it
+      # "main executable failed strict validation".  (This is also what the
+      # ocicl formula in homebrew-core is describing when it says Homebrew
+      # "manipulates the resulting ELF file in such a way that the sbcl part of
+      # the binary can't find the image cores".)
+      #
+      # So nothing is rewritten.  The real binary goes in libexec untouched,
+      # its libraries in lib, and a wrapper sets the loader search path -- which
+      # is consulted *before* the absolute path recorded at build time, so the
+      # bundled copies win.  Verified in the next step rather than assumed.
+      - name: Bundle
+        run: |
+          set -euo pipefail
+          stage="dist/curlcl-${{ steps.version.outputs.version }}-${{ matrix.target }}"
+          mkdir -p "$stage/libexec" "$stage/lib"
+          cp bin/curlcl "$stage/libexec/"
+          cp README.md LICENSE "$stage/"
+
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # Everything outside /usr/lib and /System, which are the two places
+            # every Mac has.
+            otool -L bin/curlcl | tail -n +2 | awk '{print $1}' \
+              | grep -vE '^/usr/lib/|^/System/' \
+              | while read -r lib; do cp -L "$lib" "$stage/lib/"; done
+          else
+            # glibc is assumed present; anything else comes along.
+            ldd bin/curlcl | awk '/=>/ && $3 ~ /^\// {print $3}' \
+              | grep -vE '/(libc|libm|libdl|libpthread|librt)\.so' \
+              | while read -r lib; do cp -L "$lib" "$stage/lib/"; done
+          fi
+
+          cat > "$stage/curlcl" <<'WRAPPER'
+          #!/bin/sh
+          # curlcl proper is in libexec, and the libraries it was built against
+          # are recorded in it by absolute path.  Those paths exist only on the
+          # machine that built it, and the file cannot be rewritten to say
+          # otherwise -- SBCL's appended core makes install_name_tool and
+          # patchelf refuse it.  The loader path is searched first, though, so
+          # pointing it at the copies beside this script is enough.
+          here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+          DYLD_LIBRARY_PATH="$here/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
+          LD_LIBRARY_PATH="$here/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+          exec "$here/libexec/curlcl" "$@"
+          WRAPPER
+          chmod +x "$stage/curlcl"
+          find "$stage" -type f | sed "s|$stage/||"
+
+      # The check that matters: a dependency we failed to bring has to fail the
+      # build, not the person who downloads this.
+      - name: Verify it runs without the build toolchain
+        run: |
+          set -euo pipefail
+          stage="dist/curlcl-${{ steps.version.outputs.version }}-${{ matrix.target }}"
+          "$stage/curlcl" -V
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # Ask dyld what it actually opened, under exactly the environment
+            # the wrapper sets.  Run directly rather than through the wrapper
+            # because SIP strips DYLD_PRINT_LIBRARIES when exec'ing /bin/sh.
+            loaded=$(DYLD_PRINT_LIBRARIES=1 DYLD_LIBRARY_PATH="$PWD/$stage/lib" \
+                       "$stage/libexec/curlcl" -V 2>&1 >/dev/null | grep '^dyld' || true)
+            # Asserted positively, one bundled library at a time.  Scanning the
+            # whole list for Homebrew paths instead looks equivalent and is not:
+            # libcurl and its dependencies are opened from wherever the machine
+            # keeps them, on purpose and by design, so they are always in this
+            # list and always would have failed such a check.
+            for lib in "$stage"/lib/*; do
+              # An unmatched glob stays literal, so this is also the test for
+              # "nothing needed bundling", which is a legitimate outcome.
+              [ -e "$lib" ] || continue
+              name=$(basename "$lib")
+              # Matched with `case' rather than `... | grep -q'.  Under
+              # `set -o pipefail' that pipeline reports failure exactly when it
+              # succeeds: grep -q exits at the first match, printf then dies of
+              # SIGPIPE, and pipefail returns that 141 as the pipeline's status.
+              # The path is absolute because dyld prints what it resolved, not
+              # what it was asked for.
+              case "$loaded" in
+                *"$PWD/$stage/lib/$name"*) ;;
+                *)
+                  echo "$name is bundled but is not the copy being loaded"
+                  printf '%s\n' "$loaded" | grep -F "$name" || echo "  (not loaded at all)"
+                  exit 1
+                  ;;
+              esac
+            done
+            "$stage/curlcl" -s -o /dev/null -w 'smoke %{http_code}\n' https://example.com/
+          else
+            # A container with libcurl and nothing else: no SBCL, no -dev
+            # packages, no libzstd unless we brought it.
+            docker run --rm -v "$PWD/$stage:/curlcl:ro" ubuntu:22.04 bash -c '
+              apt-get update -qq >/dev/null && apt-get install -y -qq libcurl4 >/dev/null
+              /curlcl/curlcl -V
+              /curlcl/curlcl -s -o /dev/null -w "smoke %{http_code}\n" https://example.com/
+            '
+          fi
+
+      - name: Archive
+        run: |
+          cd dist
+          tar czf "curlcl-${{ steps.version.outputs.version }}-${{ matrix.target }}.tar.gz" \
+            "curlcl-${{ steps.version.outputs.version }}-${{ matrix.target }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: curlcl-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  windows:
+    name: windows-x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Work out the version
+        id: version
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install SBCL
+        shell: pwsh
+        run: choco install sbcl --no-progress -y
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-libffi
+            mingw-w64-x86_64-curl
+            mingw-w64-x86_64-pkg-config
+
+      - name: Put the MinGW toolchain and DLLs on PATH
+        shell: pwsh
+        run: |
+          echo "D:\a\_temp\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\Program Files\Steel Bank Common Lisp" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install and configure ocicl
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/ocicl/ocicl.git $env:USERPROFILE\ocicl-src
+          cd $env:USERPROFILE\ocicl-src
+          sbcl --non-interactive --load setup.lisp
+          $found = Get-ChildItem -Path $env:USERPROFILE, $env:LOCALAPPDATA -Filter "ocicl*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $found) { Write-Host "ocicl executable not found after setup"; exit 1 }
+          echo "$($found.DirectoryName)" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Restore dependencies
+        shell: pwsh
+        run: |
+          ocicl setup
+          ocicl install
+
+      - name: Build
+        shell: pwsh
+        run: |
+          sbcl --non-interactive `
+            --load "$env:USERPROFILE\AppData\Local\ocicl\ocicl-runtime.lisp" `
+            --eval '(asdf:initialize-source-registry (list :source-registry (list :directory (uiop:getcwd)) :inherit-configuration))' `
+            --eval '(asdf:make :curlcl/cli)'
+          .\bin\curlcl.exe -V
+
+      - name: Check the binary agrees with the tag
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          reported=$(./bin/curlcl.exe -V | head -1 | awk '{print $2}')
+          if [ "$reported" != "${{ steps.version.outputs.version }}" ]; then
+            echo "tag says ${{ steps.version.outputs.version }}, binary says $reported"
+            exit 1
+          fi
+
+      # curlcl.exe does not link libcurl -- it opens it at runtime -- so the
+      # DLL closure has to be taken from libcurl and libffi as well as from the
+      # executable, or the archive would be missing exactly the libraries the
+      # binding goes looking for.
+      - name: Bundle the MSYS2 DLLs
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          stage="dist/curlcl-${{ steps.version.outputs.version }}-windows-x86_64"
+          mkdir -p "$stage"
+          cp bin/curlcl.exe "$stage/"
+          cp README.md LICENSE "$stage/"
+          for start in bin/curlcl.exe /mingw64/bin/libcurl-4.dll /mingw64/bin/libffi-8.dll; do
+            [ -e "$start" ] || continue
+            ldd "$start" | awk '{print $3}' | grep -i '/mingw64/bin/' || true
+          done | sort -u | while read -r dll; do
+            [ -f "$dll" ] && cp -n "$dll" "$stage/"
+          done
+          cp /mingw64/bin/libcurl-4.dll "$stage/" 2>/dev/null || true
+          ls "$stage"
+
+      # With MSYS2 off PATH this is the environment a downloader has.  If a DLL
+      # was missed, the exe fails to start here instead of on their machine.
+      - name: Verify it runs without MSYS2 on PATH
+        shell: pwsh
+        run: |
+          $stage = "dist/curlcl-${{ steps.version.outputs.version }}-windows-x86_64"
+          $env:PATH = "C:\Windows\System32;C:\Windows"
+          & "$stage\curlcl.exe" -V
+          if ($LASTEXITCODE -ne 0) { throw "curlcl.exe did not run without MSYS2 on PATH" }
+          & "$stage\curlcl.exe" -s -o NUL -w "smoke %{http_code}`n" https://example.com/
+          if ($LASTEXITCODE -ne 0) { throw "curlcl.exe could not fetch without MSYS2 on PATH" }
+
+      - name: Archive
+        shell: pwsh
+        run: |
+          $name = "curlcl-${{ steps.version.outputs.version }}-windows-x86_64"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: curlcl-windows-x86_64
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish the release
+    needs: [unix, windows]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cat > notes.md <<'NOTES'
+          Built with SBCL on GitHub's runners.  Unpack and put `curlcl` on your
+          PATH; the archives carry the libraries that are not part of a stock
+          system, so nothing else needs installing.
+
+          **libcurl is not bundled, deliberately.** curlcl opens it at startup
+          rather than linking it, so it uses the one on your machine and gets
+          that build's capabilities.  Notably, the libcurl macOS ships in the
+          dyld shared cache has no websocket support -- `brew install curl` (or
+          `brew install curlcl`, which depends on it) gets you one that has.
+          `curlcl -V` prints which library it found, and what that library can
+          speak.
+
+          On macOS the binaries are signed ad-hoc rather than notarised, so
+          Gatekeeper will want `xattr -d com.apple.quarantine curlcl` after
+          downloading.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" \
+            --title "curlcl $version" \
+            --notes-file notes.md \
+            artifacts/*
