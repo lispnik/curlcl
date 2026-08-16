@@ -402,6 +402,25 @@ differ for reasons that have nothing to do with what is being tested."
     ;; No --retry at all means no policy, not a policy of one attempt.
     (is (null (policy)))))
 
+(test the-help-explains-what-a-range-looks-like
+  ;; "-r, --range <RANGE>" says nothing about the syntax, and neither does
+  ;; curl's line -- there are five forms and one of them, a leading dash
+  ;; meaning the last N bytes, reads like a mistake.  It goes after OPTIONS,
+  ;; where someone who has just read that line will be looking.
+  (let ((help (with-output-to-string (out)
+                (clingon:print-usage (curlcl/cli::command) out))))
+    (is (search "RANGE is a byte range" help))
+    ;; The forms themselves, and the one worth spelling out.
+    (is (search "-r 0-499" help))
+    (is (search "-r -500" help))
+    (is (search "-r 9500-" help))
+    (is (search "the LAST 500 bytes" help))
+    ;; After the options, not before them.
+    (let ((options (search "OPTIONS:" help))
+          (range (search "RANGE is a byte range" help)))
+      (is (and options range (< options range))
+          "the RANGE notes should follow the option list, not precede it"))))
+
 (test a-quantity-is-parsed-strictly-or-refused
   ;; clingon's :INTEGER parses with :JUNK-ALLOWED, so "0.5" came back as 0
   ;; without a word -- and 0 is not a small number to libcurl, it is "no

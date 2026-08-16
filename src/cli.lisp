@@ -1417,6 +1417,34 @@ is given.")
    :license "MIT"
    :version *program-version*
    :usage "[options...] <url>..."
+   ;; Printed after OPTIONS, which is where someone who has just read
+   ;; "-r, --range <RANGE>" goes looking.  The option line cannot carry this
+   ;; and curl's does not try: there are five forms, and the one that catches
+   ;; people -- a leading dash meaning "the last N bytes" rather than "up to
+   ;; byte N" -- needs a sentence rather than a placeholder.
+   ;; The descriptions are single logical lines -- the ~ continuations join
+   ;; them -- because clingon wraps each one itself at 70 columns.  Newlines
+   ;; of our own get wrapped a second time, which leaves orphaned words at the
+   ;; end of every source line.
+   :examples
+   (list
+    (cons (format nil "RANGE is a byte range: offsets are zero-based, both ~
+ends are inclusive -- so 0-499 is five hundred bytes -- and either end may be ~
+left off.  It reaches the server as an HTTP Range header, so one that does ~
+not support ranges answers with the whole body and status 200 rather than an ~
+error.")
+          "curlcl -r 0-499   url   # the first 500 bytes
+curlcl -r 500-999 url   # the second 500 bytes
+curlcl -r -500    url   # the LAST 500 bytes, not the first 501
+curlcl -r 9500-   url   # from byte 9500 to the end
+curlcl -r 0-0     url   # the first byte only")
+    (cons (format nil "Asking for several at once is HTTP-only.  The server ~
+answers with a multipart/byteranges body, handed back exactly as it arrived; ~
+splitting it is the caller's job, as it is with curl.  Only digits are valid ~
+either side of the dash -- anything else is passed on untouched, and what a ~
+server makes of it is defined by neither curl nor this program.")
+          "curlcl -r 100-199,500-599 url
+curlcl -r 0-0,-1          url   # the first and last byte"))
    :options (options)
    :handler #'handler))
 
