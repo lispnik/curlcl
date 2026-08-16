@@ -28,7 +28,12 @@
                 "libcurl.4.dylib"
                 "libcurl.dylib"))
   (:unix (:or "libcurl.so.4" "libcurl.so"))
-  (:windows (:or "libcurl.dll" "libcurl-x64.dll"))
+  ;; libcurl-4.dll is what MinGW-w64 and MSYS2 call it, and it is the name a
+  ;; DLL shipped beside the executable will have.  Leaving it out meant a
+  ;; build that had libcurl right next to it reported LIBRARY-NOT-FOUND, while
+  ;; the same machine worked when some unrelated libcurl.dll happened to be on
+  ;; PATH -- which is the wrong library found for the wrong reason.
+  (:windows (:or "libcurl.dll" "libcurl-4.dll" "libcurl-x64.dll"))
   (t (:default "libcurl")))
 
 (defvar *libcurl-pathname* nil
@@ -77,7 +82,7 @@ if nothing loads."
                    #+darwin '("/opt/homebrew/opt/curl/lib/libcurl.4.dylib"
                               "/usr/local/opt/curl/lib/libcurl.4.dylib"
                               "libcurl.4.dylib" "libcurl.dylib")
-                   #+windows '("libcurl.dll" "libcurl-x64.dll")
+                   #+windows '("libcurl.dll" "libcurl-4.dll" "libcurl-x64.dll")
                    #-(or darwin windows) '("libcurl.so.4" "libcurl.so")))))))
 
 ;;; The strerror family -------------------------------------------------------
