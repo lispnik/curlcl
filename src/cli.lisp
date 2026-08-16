@@ -28,6 +28,12 @@
 (defparameter *program-name* "curlcl")
 (defparameter *program-version* "0.1.0")
 
+(defvar *quiet* nil
+  "True when -s was given without -S.
+
+Read by the top-level write-failure handler, which runs after the command
+object is out of scope and so cannot ask it.")
+
 ;;; Output --------------------------------------------------------------------
 
 (defun standard-descriptor (direction)
@@ -1147,9 +1153,63 @@ binary mode, where there is no such convention to appeal to."
    (clingon:make-option :flag :long-name "http3" :description "use HTTP 3"
                         :key :http3)))
 
+(defun write-failure-p (condition)
+  "True when CONDITION is a failure writing one of our own output streams.
+
+Which in practice means a closed pipe: `curlcl url | head', or a pager quit
+before the end.  Checked by asking the condition for its stream rather than by
+matching on the message, which is implementation wording."
+  (and (typep condition 'stream-error)
+       (let ((stream (stream-error-stream condition)))
+         (and (streamp stream) (output-stream-p stream)))))
+
+(defun flush-outputs ()
+  "Push our buffered output out while a handler is still established.
+
+This is why the guard in MAIN needs it: the body is written through a buffered
+stream, so WRITE-SEQUENCE returns happily and the write(2) that meets the
+closed pipe happens at flush time.  Left to the image's own exit hooks that is
+after MAIN has unwound, where nothing of ours is watching and the condition
+reaches the fatal handler instead."
+  (when *binary-stdout* (finish-output *binary-stdout*))
+  (finish-output *standard-output*))
+
+(defmacro with-write-failures-reported (&body body)
+  "Run BODY, turning a failure to write our output into curl's answer for it.
+
+Established here rather than around CLINGON:RUN, and that is forced: RUN ends
+in a HANDLER-CASE catching ERROR that prints the condition bare and exits 1.
+Being a handler-case *inside* RUN it is deeper than anything wrapped around
+RUN, so it wins, and an outer handler only gets its turn afterwards -- which
+showed as both messages, SBCL's and ours, one after the other.  A handler in
+the command handler is deeper still, so it goes first and clingon never sees
+the condition."
+  `(handler-bind ((stream-error
+                    (lambda (condition)
+                      (when (write-failure-p condition)
+                        (unless *quiet*
+                          (message "Failure writing output to destination"))
+                        ;; Told not to flush on the way out: the stream it
+                        ;; would flush is the broken one, and failing there
+                        ;; lands straight back here.
+                        (uiop:quit 56 nil)))))
+     (unwind-protect (progn ,@body)
+       (flush-outputs))))
+
 (defun handler (command)
+  (setf *quiet* (and (clingon:getopt command :silent) t
+                     (not (clingon:getopt command :show-error))))
+  (with-write-failures-reported
+    (%handler command)))
+
+(defun %handler (command)
   (when (clingon:getopt command :show-version)
-    (print-curl-version)
+    ;; A closed pipe here is `curlcl -V | head', which curl treats as nothing
+    ;; at all: it exits 0 and says nothing.  There is no transfer to report a
+    ;; failure about, so neither do we.
+    (handler-case (print-curl-version)
+      (stream-error (condition)
+        (unless (write-failure-p condition) (error condition))))
     (clingon:exit 0))
   (let ((urls (clingon:command-arguments command)))
     (when (null urls)
@@ -1198,4 +1258,20 @@ is given.")
 
 (defun main ()
   "Entry point for the bin/curlcl executable."
+  ;; A reader that goes away is ordinary, and everywhere else it is invisible:
+  ;; SIGPIPE kills the writer and the shell thinks nothing of it.  SBCL instead
+  ;; ignores SIGPIPE and raises a stream error, which -- with nothing catching
+  ;; it -- reached UIOP's fatal handler and printed the stream object itself:
+  ;;
+  ;;   Couldn't write to #<SB-SYS:FD-STREAM for "descriptor 1" {8007235473}>:
+  ;;     Broken pipe
+  ;;
+  ;; That is an implementation detail, it ignored -s, and it exited 1 where
+  ;; curl exits 56 saying "Failure writing output to destination".
+  ;;
+  ;; HANDLER-BIND rather than HANDLER-CASE so anything that is not ours keeps
+  ;; its stack and reaches the debugger hook as before.  UIOP:QUIT is told not
+  ;; to flush on the way out: the stream it would flush is the broken one, and
+  ;; failing there would put us right back here.
   (clingon:run (command)))
+

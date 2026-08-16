@@ -202,6 +202,24 @@ package → conditions → library → types → varargs → easy-raw → memory
   instead. Anything reached before a capability check must not itself need the
   capability.
 
+- **A handler wrapped around `clingon:run` never gets first refusal.** `run`
+  ends in a `handler-case` on `error` that prints the condition bare and exits
+  1 — and being *inside* `run` it is deeper than anything wrapped around it, so
+  it wins and an outer handler only runs afterwards, during the unwind. That
+  showed as two messages for one failure, SBCL's and then ours. Anything the
+  driver wants to report its own way has to be handled in the command handler
+  or deeper. `with-write-failures-reported` in `src/cli.lisp` is the pattern.
+
+- **The write that meets a closed pipe happens at flush, not in the callback.**
+  Standard output is a fully buffered fd-stream, so `write-sequence` inside
+  libcurl's write callback returns happily and the `write(2)` that gets EPIPE
+  comes later — at `close-sink`, or in the image's exit hooks after everything
+  of ours has unwound. Guarding only the callback or only `perform` catches
+  nothing; the guard has to cover an explicit flush that we make happen while
+  the handler is still established. And SBCL ignores SIGPIPE rather than dying
+  the way a C program would, so this arrives as a condition rather than a
+  signal — `curlcl url | head` printed `#<SB-SYS:FD-STREAM …>` at the user.
+
 - **Implementation-specific code is confined to three places**, and there is no
   `#-sbcl (error ...)` left: the bulk octet copy in `memory.lisp` (portable
   fallback), `fd-byte-stream` in `cli.lisp` (SBCL/ECL/CCL/CLISP clauses plus a

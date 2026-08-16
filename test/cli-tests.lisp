@@ -488,6 +488,63 @@ differ for reasons that have nothing to do with what is being tested."
       ;; CURLE_FILESIZE_EXCEEDED.
       (is (= 63 code)))))
 
+(test a-closed-pipe-is-reported-the-way-curl-reports-it
+  ;; `curlcl url | less', quit before the end.  SBCL ignores SIGPIPE and raises
+  ;; a stream error instead of the process dying quietly, and with nothing of
+  ;; ours catching it clingon's own catch-all printed the condition bare --
+  ;; "Couldn't write to #<SB-SYS:FD-STREAM for \"descriptor 1\" {8007235203}>"
+  ;; -- and exited 1.  An internal object, in output meant for a person, for
+  ;; something that is not really an error.  curl exits 56 saying "Failure
+  ;; writing output to destination", and is silent under -s.
+  (with-curlcl-or-skip
+    (if (uiop:os-windows-p)
+        ;; The shell plumbing below is Unix, and SIGPIPE is not a Windows
+        ;; concept; the handler is platform-independent but this way of
+        ;; provoking it is not.
+        (skip "the closed-pipe check needs a Unix shell")
+    (let ((url (test-url "/large?bytes=200000")))
+      (flet ((piped (&rest arguments)
+               ;; head -c exits after a little, closing the pipe under us.
+               ;; The status is carried out through a file rather than through
+               ;; PIPESTATUS, which is a bashism -- /bin/sh is dash on Debian
+               ;; and Ubuntu, where it would silently expand to nothing and the
+               ;; assertion would read head's status instead of curlcl's.
+               (uiop:with-temporary-file (:pathname status)
+                 (uiop:with-temporary-file (:pathname errors)
+                   ;; Standard output has to be the pipe -- that is the whole
+                   ;; point -- so the diagnostics go to a file beside it.
+                   ;; Redirecting stderr into the pipe instead leaves stdout
+                   ;; pointed at /dev/null, nothing ever breaks, and the test
+                   ;; passes against a transfer that simply succeeded.
+                   (let ((command
+                           (format nil "{ ~A ~{~A ~}~A 2>~A; echo $? > ~A; } | head -c 100 >/dev/null"
+                                   (native-namestring-of *curlcl-binary*)
+                                   arguments url
+                                   (uiop:native-namestring errors)
+                                   (uiop:native-namestring status))))
+                     (uiop:run-program (list "/bin/sh" "-c" command)
+                                       :output nil :error-output nil
+                                       :ignore-error-status t)
+                     (values (uiop:read-file-string errors)
+                             (parse-integer (uiop:read-file-string status)
+                                            :junk-allowed t)))))))
+        ;; The exit code is what a script sees, and it is curl's.
+        (multiple-value-bind (output code) (piped)
+          (declare (ignore output))
+          (is (= 56 code) "a closed pipe should exit 56 as curl does"))
+        ;; Whatever is said, it must not be a Lisp object.
+        (multiple-value-bind (output code) (piped)
+          (declare (ignore code))
+          (is (not (search "SB-SYS" output))
+              "the internal stream object reached the user: ~S" output)
+          (is (not (search "FD-STREAM" output))
+              "the internal stream object reached the user: ~S" output))
+        ;; -s means silent, including for this.
+        (multiple-value-bind (output code) (piped "-s")
+          (is (= 56 code))
+          (is (zerop (length (string-trim '(#\Space #\Newline) output)))
+              "-s should have suppressed ~S" output)))))))
+
 (test a-websocket-url-is-recognised-by-its-scheme
   ;; Deliberately NOT wrapped in WITH-WEBSOCKETS-OR-SKIP.  Recognising the
   ;; scheme has to work on a libcurl built without websockets -- that is
