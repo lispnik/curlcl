@@ -18,7 +18,7 @@
 LISP ?= sbcl
 BIN  := bin/curlcl
 
-.PHONY: all build test deps tables clean
+.PHONY: all build test deps tables docs-check clean
 
 all: test
 
@@ -37,6 +37,15 @@ test:
 
 deps:
 	ocicl install
+
+# Run every example shown on docs/index.html.  The page says its Lisp was
+# executed; this is what keeps that true.  Needs a network -- the examples
+# talk to example.com, as the page shows them doing.
+docs-check:
+	$(LISP) --non-interactive \
+	  --eval '(asdf:load-system :curlcl)' \
+	  --load docs/examples.lisp \
+	  --eval '(uiop:quit (if (curlcl/docs:run-all) 0 1))'
 
 # Regenerate the committed option and info tables from the curl headers of the
 # libcurl this machine would load.  Only run this deliberately: the emitted

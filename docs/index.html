@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>curlcl — libcurl from Common Lisp</title>
+<meta name="description" content="A Common Lisp binding to libcurl, shown next to the C it corresponds to.">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfbfa; --fg: #1a1a1a; --dim: #5c5c5c; --rule: #e0ded9;
+    --panel: #ffffff; --code-bg: #f5f4f1; --accent: #1f6feb; --c-tint: #8a6d3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a; --fg: #e6e6e6; --dim: #9aa0a6; --rule: #2b2f36;
+      --panel: #191c21; --code-bg: #1f232a; --accent: #6ea8fe; --c-tint: #d0b070;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 1.25rem 5rem; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+  }
+  .wrap { max-width: 68rem; margin: 0 auto; }
+  header { padding: 3.5rem 0 1.5rem; border-bottom: 1px solid var(--rule); }
+  h1 { margin: 0 0 .35rem; font-size: 2.4rem; letter-spacing: -.02em; }
+  .tagline { margin: 0; font-size: 1.15rem; color: var(--dim); }
+  .links { margin: 1.4rem 0 0; padding: 0; list-style: none; display: flex;
+           flex-wrap: wrap; gap: 1.25rem; font-size: .95rem; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h2 { margin: 3rem 0 .4rem; font-size: 1.35rem; letter-spacing: -.01em;
+       scroll-margin-top: 1rem; }
+  h2 .n { color: var(--dim); font-weight: 400; margin-right: .5rem; }
+  section > p { margin: .4rem 0 1rem; color: var(--dim); max-width: 46rem; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 60rem) { .pair { grid-template-columns: 1fr; } }
+  .col { background: var(--panel); border: 1px solid var(--rule);
+         border-radius: 8px; overflow: hidden; min-width: 0; }
+  .col h3 { margin: 0; padding: .5rem .85rem; font-size: .78rem;
+            text-transform: uppercase; letter-spacing: .09em; font-weight: 600;
+            color: var(--dim); border-bottom: 1px solid var(--rule); }
+  .col.c h3 { color: var(--c-tint); }
+  pre { margin: 0; padding: .85rem; overflow-x: auto; background: var(--code-bg);
+        font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  code { font-family: inherit; }
+  .out { margin: .55rem 0 0; padding: .5rem .85rem; font-size: .85rem;
+         color: var(--dim); border-left: 3px solid var(--rule); }
+  .out b { font-weight: 600; color: var(--fg); font-family: ui-monospace,
+           SFMono-Regular, Menlo, Consolas, monospace; font-size: .95em; }
+  .note { border: 1px solid var(--rule); border-left: 3px solid var(--accent);
+          background: var(--panel); border-radius: 4px; padding: .8rem 1rem;
+          margin: 1.5rem 0; font-size: .95rem; }
+  .single { max-width: 100%; }
+  footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--rule);
+           color: var(--dim); font-size: .9rem; }
+  table { border-collapse: collapse; margin: 1rem 0; font-size: .93rem; }
+  td, th { text-align: left; padding: .3rem 1.2rem .3rem 0; vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; }
+  tt { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+       font-size: .93em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>curlcl</h1>
+  <p class="tagline">libcurl from Common Lisp — the whole public C API, and an
+  HTTP client built on top of it.</p>
+  <ul class="links">
+    <li><a href="https://github.com/lispnik/curlcl">Source</a></li>
+    <li><a href="https://github.com/lispnik/curlcl/releases">Releases</a></li>
+    <li><a href="https://github.com/lispnik/curlcl#readme">README</a></li>
+    <li><a href="https://github.com/lispnik/curlcl/blob/master/docs/examples.lisp">These examples</a></li>
+  </ul>
+</header>
+
+<section>
+  <p>If you know libcurl, you already know most of this library. Every section
+  below is one C call beside the Lisp that does the same thing. The names are
+  libcurl's, mechanically: drop <tt>CURLOPT_</tt>, downcase, underscores to
+  hyphens, so <tt>CURLOPT_SSL_VERIFYPEER</tt> is <tt>:ssl-verifypeer</tt>.</p>
+
+  <div class="note">
+    <b>About the code on this page.</b> Every Lisp example is executed before
+    publishing — they live in
+    <a href="https://github.com/lispnik/curlcl/blob/master/docs/examples.lisp">docs/examples.lisp</a>
+    and <tt>make docs-check</tt> runs them; the results shown are what they
+    actually returned, against libcurl 8.21.0. The C column is written to
+    libcurl's documented usage to show the correspondence, and is not compiled.
+  </div>
+
+  <table>
+    <tr><th>Install (library)</th><td><tt>ocicl install</tt>, then <tt>(asdf:load-system :curlcl)</tt></td></tr>
+    <tr><th>Install (command)</th><td><tt>brew tap lispnik/curlcl &amp;&amp; brew trust lispnik/curlcl &amp;&amp; brew install curlcl</tt></td></tr>
+    <tr><th>Package</th><td><tt>curlcl</tt>, nicknamed <tt>curl</tt></td></tr>
+    <tr><th>Needs</th><td>libcurl 7.83 or newer. No C toolchain — nothing here is groveled or compiled.</td></tr>
+  </table>
+
+  <p>Which libcurl you get matters, because there is usually more than one on a
+  machine and they differ in version, TLS backend and whether
+  <tt>ws://</tt> exists at all. <tt>curlcl -V</tt> prints the one that was
+  opened, and <tt>(curl:libcurl-pathname)</tt> answers the same question from
+  Lisp.</p>
+</section>
+
+<section>
+  <h2 id="hello"><span class="n">1</span>Hello, transfer</h2>
+  <p>The shape is the same: make a handle, set options on it, perform, release.
+  What changes is that releasing is the macro's job, and a failure is a
+  condition rather than a code you must remember to check.</p>
+  <div class="pair">
+    <div class="col c"><h3>C</h3><pre><code>CURL *handle = curl_easy_init();
+curl_easy_setopt(handle, CURLOPT_URL, "https://example.com/");
+curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1L);
+
+CURLcode code = curl_easy_perform(handle);
+if (code != CURLE_OK)
+    fprintf(stderr, "%s\n", curl_easy_strerror(code));
+
+long status;
+curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &amp;status);
+curl_easy_cleanup(handle);</code></pre></div>
+    <div class="col"><h3>Lisp</h3><pre><code>(curl:with-easy (handle)
+  (curl:setopts handle :url "https://example.com/"
+                       :followlocation t)
+  (curl:perform handle)
+  (curl:getinfo handle :response-code))</code></pre></div>
+  </div>
+  <p class="out">returns <b>200</b></p>
+</section>
+
+<section>
+  <h2 id="options"><span class="n">2</span>Options and info</h2>
+  <p>One <tt>setopts</tt> takes as many options as you like. Each value is
+  converted according to the type libcurl declares for that option, so
+  <tt>t</tt> becomes <tt>1L</tt> where a long is wanted and a string is copied
+  where libcurl copies. An option this libcurl does not have is reported by
+  name, not as <tt>CURLE_UNKNOWN_OPTION</tt>.</p>
+  <div class="pair">
+    <div class="col c"><h3>C</h3><pre><code>curl_easy_setopt(handle, CURLOPT_URL, "https://example.com/");
+curl_easy_setopt(handle, CURLOPT_USERAGENT, "curlcl/docs");
+curl_easy_setopt(handle, CURLOPT_TIMEOUT, 30L);
+curl_easy_setopt(handle, CURLOPT_SSL_VERIFYPEER, 1L);
+
+char *url; double bytes; curl_off_t n;
+curl_easy_getinfo(handle, CURLINFO_EFFECTIVE_URL, &amp;url);
+curl_easy_getinfo(handle, CURLINFO_SIZE_DOWNLOAD, &amp;bytes);</code></pre></div>
+    <div class="col"><h3>Lisp</h3><pre><code>(curl:setopts handle :url "https://example.com/"
+                     :useragent "curlcl/docs"
+                     :timeout 30
+                     :ssl-verifypeer t)
+(curl:perform handle)
+(list :code  (curl:getinfo handle :response-code)
+      :url   (curl:getinfo handle :effective-url)
+      :type  (curl:getinfo handle :content-type)
+      :bytes (curl:getinfo handle :size-download))</code></pre></div>
+  </div>
+  <p class="out">returns <b>(:CODE 200 :URL "https://example.com/" :TYPE "text/html" :BYTES 559.0d0)</b></p>
+</section>
+
+<section>
+  <h2 id="write"><span class="n">3</span>Taking the body</h2>
+  <p>In C a write callback is a function pointer plus a <tt>void *</tt> you
+  cast back. Here it is a closure, so the state it needs is just what it closes
+  over. Returning true accepts the chunk; a Lisp condition signalled inside is
+  caught at the boundary and re-signalled afterwards, so it never unwinds
+  through C.</p>
+  <div class="pair">
+    <div class="col c"><h3>C</h3><pre><code>static size_t on_data(char *p, size_t sz, size_t n, void *user)
+{
+    size_t bytes = sz * n;
+    *(size_t *)user += bytes;
+    return bytes;            /* short return aborts */
+}
+
+size_t total = 0;
+curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, on_data);
+curl_easy_setopt(handle, CURLOPT_WRITEDATA, &amp;total);</code></pre></div>
+    <div class="col"><h3>Lisp</h3><pre><code>(let ((total 0))
+  (curl:with-easy (handle)
+    (setf (curl:callback-function handle :write)
+          (lambda (octets)
+            (incf total (length octets))
+            t))
+    (curl:setopts handle :url "https://example.com/")
+    (curl:perform handle))
+  total)</code></pre></div>
+  </div>
+  <p class="out">returns <b>559</b></p>
+</section>
+
+<section>
+  <h2 id="multi"><span class="n">4</span>Many at once</h2>
+  <p>The multi interface without the loop. <tt>run-transfers</tt> performs,
+  waits and drains the message queue until everything has finished, and returns
+  a result per transfer. The socket API underneath it is exported too, for
+  fitting into an event loop you already have.</p>
+  <div class="pair">
+    <div class="col c"><h3>C</h3><pre><code>CURLM *multi = curl_multi_init();
+curl_multi_add_handle(multi, h1);
+curl_multi_add_handle(multi, h2);
+
+int running;
+do {
+    curl_multi_perform(multi, &amp;running);
+    if (running) curl_multi_poll(multi, NULL, 0, 1000, NULL);
+} while (running);
+
+CURLMsg *m; int left;
+while ((m = curl_multi_info_read(multi, &amp;left)))
+    if (m-&gt;msg == CURLMSG_DONE) check(m-&gt;data.result);</code></pre></div>
+    <div class="col"><h3>Lisp</h3><pre><code>(curl:with-multi (multi)
+  (dolist (h handles)
+    (curl:add-transfer multi h))
+  (mapcar #'curl:result-code-name
+          (curl:run-transfers multi)))</code></pre></div>
+  </div>
+  <p class="out">returns <b>(:OK :OK :OK)</b></p>
+</section>
+
+<section>
+  <h2 id="urls"><span class="n">5</span>URLs</h2>
+  <p>libcurl's own parser, which is worth using over a Lisp one because it is
+  the parser that will be applied to the transfer, quirks included.
+  <tt>parse-url</tt> is the whole thing as a plist; <tt>with-url</tt> keeps a
+  handle so parts can be set and the result read back out.</p>
+  <div class="pair">
+    <div class="col c"><h3>C</h3><pre><code>CURLU *u = curl_url();
+curl_url_set(u, CURLUPART_URL, "https://example.com/a", 0);
+curl_url_set(u, CURLUPART_PATH, "/b/c", 0);
+
+char *host, *out;
+curl_url_get(u, CURLUPART_HOST, &amp;host, 0);
+curl_url_get(u, CURLUPART_URL, &amp;out, 0);
+curl_free(host); curl_free(out);
+curl_url_cleanup(u);</code></pre></div>
+    <div class="col"><h3>Lisp</h3><pre><code>(curl:parse-url "https://example.com:8443/a/b?q=1#frag")
+
+(curl:with-url (u "https://example.com/a")
+  (setf (curl:url-part u :path) "/b/c")
+  (curl:url-string u))</code></pre></div>
+  </div>
+  <p class="out">the first returns <b>(:SCHEME "https" :HOST "example.com" :PORT "8443" :PATH "/a/b" :QUERY "q=1" :FRAGMENT "frag")</b>, the second <b>"https://example.com/b/c"</b></p>
+</section>
+
+<section>
+  <h2 id="mime"><span class="n">6</span>Multipart</h2>
+  <p><tt>curl_mime_*</tt> is bound; <tt>curl_formadd</tt> is not, being
+  deprecated everywhere and variadic with a sentinel list. Parts can carry data,
+  a file, a content type, extra headers, or nested subparts.</p>
+  <div class="pair">
+    <div class="col c"><h3>C</h3><pre><code>curl_mime *mime = curl_mime_init(handle);
+
+curl_mimepart *part = curl_mime_addpart(mime);
+curl_mime_name(part, "field");
+curl_mime_data(part, "value", CURL_ZERO_TERMINATED);
+
+part = curl_mime_addpart(mime);
+curl_mime_name(part, "note");
+curl_mime_data(part, "hello", CURL_ZERO_TERMINATED);
+curl_mime_type(part, "text/plain");
+
+curl_easy_setopt(handle, CURLOPT_MIMEPOST, mime);</code></pre></div>
+    <div class="col"><h3>Lisp</h3><pre><code>(let ((mime (curl:make-mime handle)))
+  (curl:add-mime-part mime :name "field" :data "value")
+  (curl:add-mime-part mime :name "note" :data "hello"
+                           :content-type "text/plain")
+  (curl:attach-mime handle mime))
+(curl:setopts handle :url "https://example.com/")
+(curl:perform handle)
+(curl:getinfo handle :response-code)</code></pre></div>
+  </div>
+  <p class="out">against example.com this returns <b>405</b> — it declines a POST, which is itself the evidence that a body was built and sent. The client layer below spells the same thing <tt>:multipart</tt>.</p>
+</section>
+
+<section>
+  <h2 id="share"><span class="n">7</span>Sharing between handles</h2>
+  <p>A share lets several handles pool DNS answers, TLS sessions, connections
+  and cookies. Lock callbacks are always installed, so a share is safe to use
+  across threads without arranging that yourself.</p>
+  <div class="pair">
+    <div class="col c"><h3>C</h3><pre><code>CURLSH *share = curl_share_init();
+curl_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
+curl_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
+curl_share_setopt(share, CURLSHOPT_LOCKFUNC, lock);
+curl_share_setopt(share, CURLSHOPT_UNLOCKFUNC, unlock);
+
+curl_easy_setopt(handle, CURLOPT_SHARE, share);
+/* ... */
+curl_share_cleanup(share);</code></pre></div>
+    <div class="col"><h3>Lisp</h3><pre><code>(curl:with-share (share)
+  (curl:share-data share :dns)
+  (curl:share-data share :ssl-session)
+  (loop repeat 2
+        collect (curl:with-easy (handle)
+                  (curl:attach-share handle share)
+                  (curl:setopts handle :url "https://example.com/")
+                  (curl:perform handle)
+                  (curl:getinfo handle :response-code))))</code></pre></div>
+  </div>
+  <p class="out">two transfers over one share return <b>(200 200)</b>, the second reusing the first's connection</p>
+</section>
+
+<section>
+  <h2 id="headers"><span class="n">8</span>Response headers</h2>
+  <p>Headers as libcurl parsed them, rather than as text you split yourself.
+  Duplicates are kept, which is the only representation that can be right for
+  <tt>Set-Cookie</tt>.</p>
+  <div class="pair">
+    <div class="col c"><h3>C</h3><pre><code>struct curl_header *h;
+if (curl_easy_header(handle, "content-type", 0,
+                     CURLH_HEADER, -1, &amp;h) == CURLHE_OK)
+    puts(h-&gt;value);
+
+struct curl_header *prev = NULL;
+while ((h = curl_easy_nextheader(handle, CURLH_HEADER, -1, prev))) {
+    printf("%s: %s\n", h-&gt;name, h-&gt;value);
+    prev = h;
+}</code></pre></div>
+    <div class="col"><h3>Lisp</h3><pre><code>(let ((response (curl:http-get "https://example.com/")))
+  (list :content-type
+          (curl:response-header-values response "content-type")
+        :how-many
+          (length (curl:response-headers response))))</code></pre></div>
+  </div>
+  <p class="out">returns <b>(:CONTENT-TYPE ("text/html") :HOW-MANY 9)</b></p>
+</section>
+
+<section>
+  <h2 id="websockets"><span class="n">9</span>Websockets</h2>
+  <p>Feature-gated at runtime, because whether <tt>ws://</tt> works is a
+  property of the libcurl that got loaded — macOS ships one built without it.
+  Ask before you rely on it. libcurl marks this API experimental, and that
+  caveat is passed on rather than hidden.</p>
+  <div class="pair">
+    <div class="col c"><h3>C</h3><pre><code>curl_easy_setopt(handle, CURLOPT_URL, "wss://example.com/");
+curl_easy_setopt(handle, CURLOPT_CONNECT_ONLY, 2L);
+curl_easy_perform(handle);
+
+size_t sent;
+curl_ws_send(handle, "hello", 5, &amp;sent, 0, CURLWS_TEXT);
+
+size_t got; const struct curl_ws_frame *meta;
+char buf[256];
+curl_ws_recv(handle, buf, sizeof buf, &amp;got, &amp;meta);</code></pre></div>
+    <div class="col"><h3>Lisp</h3><pre><code>(when (curl:websockets-supported-p)
+  (curl:with-websocket (handle "wss://example.com/")
+    (curl:ws-send-text handle "hello")
+    (curl:ws-receive handle)))     ; => (values octets frame)</code></pre></div>
+  </div>
+  <p class="out"><tt>(curl:websockets-supported-p)</tt> returned <b>T</b> against the libcurl used here; it is <b>NIL</b> against the one macOS ships</p>
+</section>
+
+<section>
+  <h2 id="errors"><span class="n">10</span>Errors</h2>
+  <p>No wrapper hands back a bare <tt>CURLcode</tt>. Every failure path ends in
+  a condition, and the code is still there on it when you want to branch on the
+  exact one. Codes decode tolerantly: a libcurl newer than this binding can
+  return one it has never heard of, and that arrives as the integer rather than
+  as a broken binding.</p>
+  <div class="pair">
+    <div class="col c"><h3>C</h3><pre><code>CURLcode code = curl_easy_perform(handle);
+if (code != CURLE_OK) {
+    fprintf(stderr, "%d: %s\n", code, curl_easy_strerror(code));
+    if (code == CURLE_COULDNT_RESOLVE_HOST) { /* ... */ }
+}</code></pre></div>
+    <div class="col"><h3>Lisp</h3><pre><code>(handler-case
+    (curl:with-easy (handle)
+      (curl:setopts handle :url "https://no-such-host.invalid/")
+      (curl:perform handle))
+  (curl:easy-error (condition)
+    (list :code (curl:curl-error-code condition)
+          :name (curl:curl-error-code-name condition))))</code></pre></div>
+  </div>
+  <p class="out">returns <b>(:CODE 6 :NAME :COULDNT-RESOLVE-HOST)</b></p>
+</section>
+
+<section>
+  <h2 id="client"><span class="n">11</span>The client layer</h2>
+  <p>This section has no C column, and that is the point. libcurl has no retry
+  policy, no session pooling and no notion of decoding a body; these are what
+  the library adds over the binding. A non-2xx status is a response, not a
+  condition — only transport failures signal, because only then is there
+  nothing to return.</p>
+  <div class="pair single">
+    <div class="col"><h3>Lisp</h3><pre><code>;; One request.  The body is decoded when the Content-Type says it is
+;; text and names a charset we know; otherwise it arrives as octets.
+(let ((response (curl:http-get "https://example.com/")))
+  (list :status (curl:response-status response)
+        :ok     (curl:successful-response-p response)
+        :text-p (stringp (curl:response-text response))))
+
+;; Several at once, over the multi interface.  A failure sits in its own
+;; slot as a condition rather than aborting the batch.
+(curl:request-many (list "https://example.com/"
+                         "https://example.com/"))
+
+;; A session pools handles over a share, so connections, DNS answers,
+;; TLS sessions and cookies are common to a run of requests.
+(curl:with-session (session)
+  (curl:http-get "https://example.com/" :session session)
+  (curl:http-get "https://example.com/" :session session))
+
+;; Retry, which libcurl has none of.  POST is not retried unless you say
+;; so, since only you know whether repeating one duplicates an order.
+(curl:http-get "https://flaky.example/"
+               :retry '(:max-attempts 5 :initial-delay 0.5))
+
+;; Streaming, in either direction; the source never has to fit in memory.
+(curl:download "https://example.com/big.iso" #p"/tmp/big.iso" :retry 3)
+(curl:http-put "https://example.com/big.iso" :input #p"/tmp/big.iso")</code></pre></div>
+  </div>
+  <p class="out">the first returns <b>(:STATUS 200 :OK T :TEXT-P T)</b>, the second <b>(200 200)</b>, the third <b>(200 200)</b></p>
+</section>
+
+<section>
+  <h2 id="cli"><span class="n">12</span>And a curl you can run</h2>
+  <p>The same library drives <tt>curlcl</tt>, a curl(1) workalike: option
+  names, defaults, output destinations and <em>exit codes</em> follow curl, so
+  most curl command lines work unchanged and scripts checking the status keep
+  working. Holding to that is what forces the library to cover what a real
+  client needs rather than what is convenient to expose.</p>
+  <div class="pair single">
+    <div class="col"><h3>Shell</h3><pre><code>$ curlcl -s -o /dev/null -w '%{http_code} in %{time_total}s\n' https://example.com/
+200 in 0.086570s
+
+$ curlcl -s -d @payload.json -H 'Content-Type: application/json' https://api.example/
+$ curlcl -sZ -o a.html -o b.html https://a.example/ https://b.example/   # parallel
+$ curlcl --retry 3 https://flaky.example/                                # backoff
+$ printf 'hello\n' | curlcl ws://echo.example/                           # websockets
+
+$ curlcl -V          # which libcurl did it open, and what can that one do?
+curlcl 0.1.6 (aarch64-apple-darwin25.4.0) libcurl/8.21.0 OpenSSL/3.6.3 ...
+Library: /opt/homebrew/opt/curl/lib/libcurl.4.dylib
+Protocols: dict file ftp ftps ... http https ... ws wss</code></pre></div>
+  </div>
+</section>
+
+<footer>
+  <p>curlcl is MIT licensed. The Lisp on this page is run by
+  <tt>make docs-check</tt> and the output shown is what it returned, against
+  libcurl 8.21.0 on macOS arm64; the C is illustrative and is not compiled.</p>
+  <p><a href="https://github.com/lispnik/curlcl">github.com/lispnik/curlcl</a></p>
+</footer>
+
+</div>
+</body>
+</html>

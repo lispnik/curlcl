@@ -10,6 +10,10 @@ A comprehensive Common Lisp binding to libcurl — the easy interface with all
 308 of its options and 78 info values, multi, share, the URL parser, MIME,
 the header API and websockets — plus an HTTP client built on top of it.
 
+**[lispnik.github.io/curlcl](https://lispnik.github.io/curlcl/)** shows each
+libcurl C call beside the Lisp that does the same thing, which is the quickest
+way in if you already know libcurl.
+
 ## Installation
 
 As a library:
