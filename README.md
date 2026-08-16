@@ -213,6 +213,18 @@ downcase, underscores to hyphens — so `CURLOPT_SSL_VERIFYPEER` is
 `:ssl-verifypeer`. An option the loaded libcurl does not have is reported by
 name rather than as `CURLE_UNKNOWN_OPTION`.
 
+The client takes the same keywords through `:setopts`, applied after
+everything else and so able to override it. The named arguments cover what a
+client usually wants; this is the way to the remaining three hundred without
+dropping down to `with-easy` and rebuilding the request:
+
+```lisp
+(curl:http-get "https://example.com/"
+               :setopts '(:interface "en0"
+                          :max-recv-speed-large 65536
+                          :resolve ("example.com:443:127.0.0.1")))
+```
+
 ## The command-line driver
 
 `make build` produces `bin/curlcl`, a curl(1) workalike built on the library.

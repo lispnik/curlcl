@@ -418,6 +418,92 @@ differ for reasons that have nothing to do with what is being tested."
         (is (< elapsed 8) "~,1Fs: --retry-max-time did not bound the retrying"
             elapsed)))))
 
+(test limit-rate-accepts-curls-suffixes
+  (is (= 1024 (curlcl/cli::parse-rate "1K")))
+  (is (= 204800 (curlcl/cli::parse-rate "200K")))
+  (is (= 1048576 (curlcl/cli::parse-rate "1M")))
+  (is (= 500 (curlcl/cli::parse-rate "500")))
+  ;; Binary, as curl's are: 1K is not 1000.
+  (is (/= 1000 (curlcl/cli::parse-rate "1K")))
+  (signals error (curlcl/cli::parse-rate "bogus"))
+  (signals error (curlcl/cli::parse-rate "10X")))
+
+(test time-cond-reads-a-date-and-its-negation
+  (multiple-value-bind (sense seconds)
+      (curlcl/cli::parse-time-condition "Wed, 01 Jan 2020 00:00:00 GMT")
+    (is (= 1 sense))                    ; CURL_TIMECOND_IFMODSINCE
+    (is (= 1577836800 seconds)))        ; the same instant as Unix time
+  (multiple-value-bind (sense seconds)
+      (curlcl/cli::parse-time-condition "-Wed, 01 Jan 2020 00:00:00 GMT")
+    (is (= 2 sense))                    ; CURL_TIMECOND_IFUNMODSINCE
+    (is (= 1577836800 seconds)))
+  (signals error (curlcl/cli::parse-time-condition "not-a-date")))
+
+(test the-connection-flags-become-libcurl-options
+  ;; The plist REQUEST passes to :SETOPTS.  Asserted here rather than only
+  ;; end-to-end because most of these cannot be observed from a response.
+  (flet ((setopts-for (&rest arguments)
+           (let ((command (clingon:parse-command-line
+                           (curlcl/cli::command) arguments)))
+             (curlcl/cli::connection-setopts command))))
+    (is (equal 204800 (getf (setopts-for "--limit-rate" "200K" "http://x/")
+                            :max-recv-speed-large)))
+    (is (equal 204800 (getf (setopts-for "--limit-rate" "200K" "http://x/")
+                            :max-send-speed-large)))
+    (is (equal 1 (getf (setopts-for "-4" "http://x/") :ipresolve)))
+    (is (equal 2 (getf (setopts-for "-6" "http://x/") :ipresolve)))
+    (is (equal "eth0" (getf (setopts-for "--interface" "eth0" "http://x/")
+                            :interface)))
+    (is (equal '("a.example:443:127.0.0.1")
+               (getf (setopts-for "--resolve" "a.example:443:127.0.0.1"
+                                  "http://x/")
+                     :resolve)))
+    ;; -E splits a passphrase off, but not at a Windows drive letter's colon.
+    (is (equal "/c/cert.pem" (getf (setopts-for "-E" "/c/cert.pem" "http://x/")
+                                   :sslcert)))
+    (is (equal "cert.pem" (getf (setopts-for "-E" "cert.pem:secret" "http://x/")
+                                :sslcert)))
+    (is (equal "secret" (getf (setopts-for "-E" "cert.pem:secret" "http://x/")
+                              :keypasswd)))
+    (is (equal "C:\\certs\\c.pem"
+               (getf (setopts-for "-E" "C:\\certs\\c.pem" "http://x/") :sslcert)))
+    ;; Nothing given, nothing set: an empty plist rather than a pile of NILs.
+    (is (null (setopts-for "http://x/")))))
+
+(test --resolve-redirects-a-name-that-does-not-exist
+  ;; The strongest end-to-end check available for it: the name cannot resolve,
+  ;; so a transfer can only succeed if --resolve was honoured.
+  (with-curlcl-or-skip
+    (multiple-value-bind (output code)
+        (run-program-capturing
+         (native-namestring-of *curlcl-binary*)
+         (list "-s" "--resolve"
+               (format nil "made-up.invalid:~D:127.0.0.1" (server-port (ensure-server)))
+               (format nil "http://made-up.invalid:~D/ok" (server-port (ensure-server)))))
+      (is (= 0 code))
+      (is (string= "ok" output)))))
+
+(test --interface-that-cannot-be-bound-fails-as-curl-does
+  (with-curlcl-or-skip
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" "--interface" "192.0.2.1"
+                                     "-o" (null-device) (test-url "/ok")))
+      (declare (ignore output))
+      ;; CURLE_INTERFACE_FAILED, which is what curl exits with here.
+      (is (= 45 code)))))
+
+(test --max-filesize-refuses-a-body-over-the-limit
+  (with-curlcl-or-skip
+    (multiple-value-bind (output code)
+        (run-program-capturing (native-namestring-of *curlcl-binary*)
+                               (list "-s" "--max-filesize" "2"
+                                     "-o" (null-device)
+                                     (test-url "/large?bytes=5000")))
+      (declare (ignore output))
+      ;; CURLE_FILESIZE_EXCEEDED.
+      (is (= 63 code)))))
+
 (test the-driver-runs-transfers-in-parallel
   ;; Timed against the sequential run rather than a fixed threshold.  A wall
   ;; clock bound has to be tight enough to prove overlap and loose enough to

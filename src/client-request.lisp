@@ -299,11 +299,17 @@ accumulated, which is what makes a large download not have to fit in memory."
                                           proxy verify-ssl ca-file verbose
                                           fail-on-error
                                           http-version range referer
-                                          output on-data on-header on-progress)
+                                          output on-data on-header on-progress
+                                          setopts)
   "Apply every request option to HANDLE.
 
 Returns (values body-closure cleanup-thunk).  The cleanup must run after the
-transfer: it closes a file opened for :INPUT, which nothing else owns."
+transfer: it closes a file opened for :INPUT, which nothing else owns.
+
+SETOPTS is a plist of raw libcurl options, applied last so that it overrides
+the named ones.  The named arguments cover what a client usually wants; this
+is the way to the remaining three hundred without growing a keyword for each,
+and without making a caller drop to WITH-EASY and rebuild the request."
   (setopt handle :url url)
   ;; The upload is arranged before the method, because CURLOPT_UPLOAD selects
   ;; PUT and APPLY-METHOD has to override the method string without cancelling
@@ -394,6 +400,11 @@ transfer: it closes a file opened for :INPUT, which nothing else owns."
                                             (octets-to-string octets
                                                               :encoding :latin-1)))
             t)))
+   ;; Last, so a caller can override anything above it -- including something
+   ;; this function set from a named argument.
+   ;; #'SETOPTS is the function and SETOPTS the argument; separate namespaces,
+   ;; so the keyword can keep the obvious name.
+   (when setopts (apply #'setopts handle setopts))
    (multiple-value-bind (output-stream close-output) (open-output output)
      (setf cleanup (lambda ()
                      ;; The output is closed after the input, so a failure
@@ -412,7 +423,7 @@ transfer: it closes a file opened for :INPUT, which nothing else owns."
                      http-version range referer
                      output on-data on-header on-progress on-retry
                      force-binary force-string
-                     retry retry-streamed session)
+                     retry retry-streamed session setopts)
   "Perform an HTTP request and return a RESPONSE.
 
 Returns (values response status headers), so the common cases stay short:
@@ -437,6 +448,11 @@ Only transport failures signal.
   :ON-PROGRESS  a function called with (dltotal dlnow ultotal ulnow)
   :RETRY        an attempt count, a plist, or a RETRY-POLICY
   :SESSION      a SESSION whose connections and cookies to reuse
+  :SETOPTS      a plist of raw libcurl options, applied after all of the
+                above and so able to override them.  The named arguments are
+                what a client usually wants; this reaches the rest of the API
+                without a keyword per option:
+                  (request url :setopts '(:interface \"eth0\" :max-recv-speed-large 65536))
   :FAIL-ON-ERROR  abort on a >= 400 status and deliver no body, signalling
                 :HTTP-RETURNED-ERROR.  Note this suppresses the RESPONSE
                 entirely, so it does not combine with :RETRY -- a retryable
@@ -460,7 +476,7 @@ body twice; :RETRY-STREAMED T says the repeated delivery is acceptable."
                       basic-auth bearer-auth cookie-jar cookies proxy verify-ssl
                       ca-file verbose http-version range referer output on-data
                       on-header on-progress input input-size fail-on-error
-                      retry-streamed))
+                      retry-streamed setopts))
   (let ((policy (check-retry-is-replayable (make-retry retry) options))
         (configure (loop for (key value) on options by #'cddr
                          unless (member key '(:retry :session :force-binary

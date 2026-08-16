@@ -378,6 +378,88 @@ failure, transient or not."
        (when (clingon:getopt command :retry-max-time)
          (list :max-total-time (clingon:getopt command :retry-max-time)))))))
 
+(defun parse-rate (text)
+  "curl's --limit-rate: a byte count with an optional K, M, G or T suffix.
+
+The suffixes are binary, as curl's are: 1K is 1024 and not 1000."
+  (let* ((trimmed (string-trim " " text))
+         (last (and (plusp (length trimmed))
+                    (char-upcase (char trimmed (1- (length trimmed))))))
+         (scale (position last "KMGT")))
+    (multiple-value-bind (value end)
+        (parse-integer trimmed :junk-allowed t)
+      (unless (and value
+                   (or (= end (length trimmed))
+                       (and scale (= end (1- (length trimmed))))))
+        (error "--limit-rate wants a number with an optional K, M, G or T, ~
+got ~S" text))
+      (if scale (* value (expt 1024 (1+ scale))) value))))
+
+(defun parse-time-condition (text)
+  "curl's -z: a date, optionally prefixed with - to invert the sense.
+
+Returns (values curl-timecondition unix-seconds).  The date goes through
+libcurl's own parser, which is the same one that reads Last-Modified, so
+whatever a server would have written is accepted here."
+  (let* ((negated (and (plusp (length text)) (char= (char text 0) #\-)))
+         (body (if negated (subseq text 1) text))
+         (universal (curlcl:parse-http-date body)))
+    (unless universal
+      (error "-z wants a date libcurl can parse, got ~S" text))
+    (values (if negated 2 1)            ; CURL_TIMECOND_IFUNMODSINCE / IFMODSINCE
+            ;; libcurl wants a Unix time; Lisp counts from 1900.
+            (- universal (encode-universal-time 0 0 0 1 1 1970 0)))))
+
+(defun connection-setopts (command)
+  "The libcurl options behind the connection and transfer flags.
+
+These reach libcurl through REQUEST's :SETOPTS rather than through a keyword
+of its own for each, because they are settings of the transfer rather than
+parts of the request, and there are a great many of them."
+  (let ((plist '()))
+    (flet ((add (option value) (setf plist (list* option value plist))))
+      (let ((rate (clingon:getopt command :limit-rate)))
+        (when rate
+          ;; curl limits both directions with the one flag.
+          (let ((bytes (parse-rate rate)))
+            (add :max-recv-speed-large bytes)
+            (add :max-send-speed-large bytes))))
+      (when (clingon:getopt command :continue-at)
+        (add :resume-from-large (clingon:getopt command :continue-at)))
+      (when (clingon:getopt command :max-filesize)
+        (add :maxfilesize-large (clingon:getopt command :max-filesize)))
+      ;; CURL_IPRESOLVE_V4 is 1 and V6 is 2.  -6 wins if both are given, as in
+      ;; curl, where the last one parsed decides and ours are ordered.
+      (when (clingon:getopt command :ipv4) (add :ipresolve 1))
+      (when (clingon:getopt command :ipv6) (add :ipresolve 2))
+      (when (clingon:getopt command :interface)
+        (add :interface (clingon:getopt command :interface)))
+      (when (clingon:getopt command :resolve)
+        (add :resolve (clingon:getopt command :resolve)))
+      (when (clingon:getopt command :unix-socket)
+        (add :unix-socket-path (clingon:getopt command :unix-socket)))
+      (let ((cert (clingon:getopt command :cert)))
+        (when cert
+          ;; curl spells the passphrase cert:password, and a Windows path has
+          ;; a colon in it, so only a colon after the second character counts.
+          (let ((colon (position #\: cert :start 2)))
+            (add :sslcert (if colon (subseq cert 0 colon) cert))
+            (when colon (add :keypasswd (subseq cert (1+ colon)))))))
+      (when (clingon:getopt command :key)
+        (add :sslkey (clingon:getopt command :key)))
+      (let ((condition (clingon:getopt command :time-cond)))
+        (when condition
+          (multiple-value-bind (sense seconds) (parse-time-condition condition)
+            (add :timecondition sense)
+            (add :timevalue-large seconds))))
+      (when (clingon:getopt command :proxy-user)
+        (add :proxyuserpwd (clingon:getopt command :proxy-user)))
+      (when (clingon:getopt command :noproxy)
+        (add :noproxy (clingon:getopt command :noproxy)))
+      (when (clingon:getopt command :proxytunnel)
+        (add :httpproxytunnel t)))
+    plist))
+
 (defun http-version-keyword (command)
   (cond ((clingon:getopt command :http1.0) :http/1.0)
         ((clingon:getopt command :http1.1) :http/1.1)
@@ -441,6 +523,8 @@ failure, transient or not."
        (list :http-version (http-version-keyword command)))
      (let ((retry (retry-specification command)))
        (when retry (list :retry retry)))
+     (let ((setopts (connection-setopts command)))
+       (when setopts (list :setopts setopts)))
      ;; The body is written as it arrives rather than buffered, so a large
      ;; download does not have to fit in memory.
      (list :force-binary t))))
@@ -810,6 +894,45 @@ with both sets of headers in the order they arrived rather than only the last
    (clingon:make-option :string :long-name "cacert"
                         :description "CA certificate to verify peer against"
                         :key :cacert)
+   (clingon:make-option :string :short-name #\E :long-name "cert"
+                        :description "client certificate file (CERT[:PASSWORD])"
+                        :key :cert)
+   (clingon:make-option :string :long-name "key"
+                        :description "private key file name" :key :key)
+   (clingon:make-option :string :long-name "limit-rate"
+                        :description "limit transfer speed to RATE (e.g. 200K)"
+                        :key :limit-rate)
+   (clingon:make-option :integer :short-name #\C :long-name "continue-at"
+                        :description "resume transfer at byte OFFSET"
+                        :key :continue-at)
+   (clingon:make-option :integer :long-name "max-filesize"
+                        :description "maximum file size to download"
+                        :key :max-filesize)
+   (clingon:make-option :flag :short-name #\4 :long-name "ipv4"
+                        :description "resolve names to IPv4 addresses"
+                        :key :ipv4)
+   (clingon:make-option :flag :short-name #\6 :long-name "ipv6"
+                        :description "resolve names to IPv6 addresses"
+                        :key :ipv6)
+   (clingon:make-option :string :long-name "interface"
+                        :description "use network INTERFACE" :key :interface)
+   (clingon:make-option :list :long-name "resolve"
+                        :description "resolve HOST:PORT to ADDRESS"
+                        :key :resolve)
+   (clingon:make-option :string :long-name "unix-socket"
+                        :description "connect through this Unix domain socket"
+                        :key :unix-socket)
+   (clingon:make-option :string :short-name #\z :long-name "time-cond"
+                        :description "transfer only if changed since TIME"
+                        :key :time-cond)
+   (clingon:make-option :string :short-name #\U :long-name "proxy-user"
+                        :description "proxy user and password" :key :proxy-user)
+   (clingon:make-option :string :long-name "noproxy"
+                        :description "hosts which do not use a proxy"
+                        :key :noproxy)
+   (clingon:make-option :flag :short-name #\p :long-name "proxytunnel"
+                        :description "tunnel through the HTTP proxy"
+                        :key :proxytunnel)
    (clingon:make-option :string :short-name #\x :long-name "proxy"
                         :description "use this proxy" :key :proxy)
    (clingon:make-option :string :short-name #\r :long-name "range"
