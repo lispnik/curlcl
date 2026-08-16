@@ -308,7 +308,12 @@ jobs:
           mkdir -p "$stage"
           cp bin/curlcl.exe "$stage/"
           cp README.md LICENSE "$stage/"
-          for start in bin/curlcl.exe /mingw64/bin/libcurl-4.dll /mingw64/bin/libffi-8.dll; do
+          # Globbed rather than named.  MSYS2 ships libcurl under more than one
+          # name and the binding searches for "libcurl.dll"; seeding the closure
+          # from libcurl-4.dll alone put a DLL in the archive under a name
+          # nothing looks for, and the binary reported LIBRARY-NOT-FOUND with
+          # the library sitting right beside it.
+          for start in bin/curlcl.exe /mingw64/bin/libcurl*.dll /mingw64/bin/libffi*.dll; do
             [ -e "$start" ] || continue
             # The seed itself as well as what it pulls in.  Listing only the
             # dependencies is the obvious mistake and leaves out libffi-8.dll

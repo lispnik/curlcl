@@ -63,11 +63,22 @@ if nothing loads."
       (cffi:load-foreign-library-error (e)
         (declare (ignore e))
         (error 'library-not-found
-               :candidates (if explicit
-                               (list explicit)
-                               '("/opt/homebrew/opt/curl/lib/libcurl.4.dylib"
-                                 "/usr/local/opt/curl/lib/libcurl.4.dylib"
-                                 "libcurl.4.dylib" "libcurl.so.4" "libcurl.so")))))))
+               :candidates
+               (if explicit
+                   (list explicit)
+                   ;; Per platform, because this list is the one thing the
+                   ;; message gives someone to go and check.  It was the Unix
+                   ;; names everywhere, so a Windows failure -- which is where
+                   ;; this is most likely to be seen, libcurl not being part of
+                   ;; the system there -- advised looking for .dylib and .so
+                   ;; files, neither of which had been tried.  Mirrors
+                   ;; DEFINE-FOREIGN-LIBRARY above; the two have to move
+                   ;; together.
+                   #+darwin '("/opt/homebrew/opt/curl/lib/libcurl.4.dylib"
+                              "/usr/local/opt/curl/lib/libcurl.4.dylib"
+                              "libcurl.4.dylib" "libcurl.dylib")
+                   #+windows '("libcurl.dll" "libcurl-x64.dll")
+                   #-(or darwin windows) '("libcurl.so.4" "libcurl.so")))))))
 
 ;;; The strerror family -------------------------------------------------------
 ;;;
