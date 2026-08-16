@@ -305,15 +305,23 @@ jobs:
         run: |
           set -euo pipefail
           stage="dist/curlcl-${{ steps.version.outputs.version }}-windows-x86_64"
-          mkdir -p "$stage"
-          cp bin/curlcl.exe "$stage/"
+          # bin/ and etc/, mirroring the MSYS2 prefix, because MinGW's libcurl
+          # locates its CA bundle relative to its own DLL -- at
+          # ../etc/ssl/certs/ca-bundle.crt.  Flat beside the exe, that resolves
+          # to the *parent* of wherever the archive was unpacked, and HTTPS
+          # fails with SSL-CACERT-BADFILE while plain HTTP works.  This layout
+          # keeps the path inside the archive.
+          mkdir -p "$stage/bin" "$stage/etc/ssl/certs"
+          cp bin/curlcl.exe "$stage/bin/"
           cp README.md LICENSE "$stage/"
-          # Globbed rather than named.  MSYS2 ships libcurl under more than one
-          # name and the binding searches for "libcurl.dll"; seeding the closure
-          # from libcurl-4.dll alone put a DLL in the archive under a name
-          # nothing looks for, and the binary reported LIBRARY-NOT-FOUND with
-          # the library sitting right beside it.
-          for start in bin/curlcl.exe /mingw64/bin/libcurl*.dll /mingw64/bin/libffi*.dll; do
+          cp /mingw64/etc/ssl/certs/ca-bundle.crt "$stage/etc/ssl/certs/"
+          # Globbed rather than named, so the archive gets whatever MSYS2
+          # actually calls these.  It calls libcurl libcurl-4.dll and nothing
+          # else -- a name the binding did not know, so it reported
+          # LIBRARY-NOT-FOUND with the library sitting right beside it, while
+          # on a full PATH it succeeded by finding some unrelated libcurl.dll.
+          # src/library.lisp searches for the MinGW name now.
+          for start in "$stage"/bin/curlcl.exe /mingw64/bin/libcurl*.dll /mingw64/bin/libffi*.dll; do
             [ -e "$start" ] || continue
             # The seed itself as well as what it pulls in.  Listing only the
             # dependencies is the obvious mistake and leaves out libffi-8.dll
@@ -322,9 +330,9 @@ jobs:
             case "$start" in /mingw64/bin/*) echo "$start" ;; esac
             ldd "$start" | awk '{print $3}' | grep -i '/mingw64/bin/' || true
           done | sort -u | while read -r dll; do
-            [ -f "$dll" ] && cp -n "$dll" "$stage/"
+            [ -f "$dll" ] && cp -n "$dll" "$stage/bin/"
           done
-          ls "$stage"
+          find "$stage" -type f | sed "s|$stage/||"
 
       # With MSYS2 off PATH this is the environment a downloader has.  If a DLL
       # was missed, the exe fails to start here instead of on their machine.
@@ -333,15 +341,15 @@ jobs:
         run: |
           $stage = "dist/curlcl-${{ steps.version.outputs.version }}-windows-x86_64"
           $env:PATH = "C:\Windows\System32;C:\Windows"
-          & "$stage\curlcl.exe" -V
+          & "$stage\bin\curlcl.exe" -V
           if ($LASTEXITCODE -ne 0) { throw "curlcl.exe did not run without MSYS2 on PATH" }
           # Plain HTTP first, so a TLS problem is told apart from a DLL one:
           # this proves the transfer path works, and only then does the next
           # line ask whether certificates can be verified.
-          & "$stage\curlcl.exe" -sS -o NUL -w "http smoke %{http_code}`n" http://example.com/
+          & "$stage\bin\curlcl.exe" -sS -o NUL -w "http smoke %{http_code}`n" http://example.com/
           if ($LASTEXITCODE -ne 0) { throw "curlcl.exe could not fetch over HTTP without MSYS2 on PATH" }
           # -sS rather than -s: an error here has to say what it was.
-          & "$stage\curlcl.exe" -sS -o NUL -w "https smoke %{http_code}`n" https://example.com/
+          & "$stage\bin\curlcl.exe" -sS -o NUL -w "https smoke %{http_code}`n" https://example.com/
           if ($LASTEXITCODE -ne 0) { throw "curlcl.exe could not fetch over HTTPS without MSYS2 on PATH" }
 
       - name: Archive
