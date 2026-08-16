@@ -488,6 +488,29 @@ differ for reasons that have nothing to do with what is being tested."
       ;; CURLE_FILESIZE_EXCEEDED.
       (is (= 63 code)))))
 
+(test a-write-failure-is-recognised-in-both-its-shapes
+  ;; Which shape arrives is a matter of when the buffer fills: from inside
+  ;; libcurl's write callback, wrapped as a CALLBACK-ERROR, or later at the
+  ;; flush as a bare STREAM-ERROR.  Linux gave the first and macOS the second,
+  ;; so handling only the one that reproduces locally passes here and fails in
+  ;; CI -- which is exactly what happened.  Both are asserted directly, on
+  ;; every platform, rather than relying on which one the machine produces.
+  (with-open-stream (out (make-broadcast-stream))
+    (let* ((bare (make-condition 'stream-error :stream out))
+           (wrapped (make-condition 'curlcl:callback-error
+                                    :cause bare :kind :write
+                                    :code 23 :code-name :write-error
+                                    :message "Failed writing received data to disk/application")))
+      (is (curlcl/cli::write-failure-p bare))
+      (is (curlcl/cli::write-failure-cause-p bare))
+      (is (curlcl/cli::write-failure-cause-p wrapped)
+          "a write failure wrapped by the callback boundary was not recognised")
+      ;; A transfer failure that has nothing to do with our output is not this.
+      (is (not (curlcl/cli::write-failure-cause-p
+                (make-condition 'curlcl:easy-error
+                                :code 7 :code-name :couldnt-connect
+                                :message "Couldn't connect to server")))))))
+
 (test a-closed-pipe-is-reported-the-way-curl-reports-it
   ;; `curlcl url | less', quit before the end.  SBCL ignores SIGPIPE and raises
   ;; a stream error instead of the process dying quietly, and with nothing of

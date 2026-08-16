@@ -746,6 +746,11 @@ with both sets of headers in the order they arrived rather than only the last
              (when progress (format *error-output* "~%"))
              (report-response command response))))))
     (curlcl:curl-error (condition)
+      ;; A closed pipe reaches here wrapped as a CALLBACK-ERROR when the
+      ;; buffer filled during the transfer rather than at the flush.  Reported
+      ;; as curl reports it, not as the Lisp condition underneath.
+      (when (write-failure-cause-p condition)
+        (report-write-failure-and-quit))
       (unless (and (clingon:getopt command :silent)
                    (not (clingon:getopt command :show-error)))
         (message "~A" condition))
@@ -894,6 +899,8 @@ binary mode, where there is no such convention to appeal to."
             ;; It is blocked reading a descriptor that is not ours to close.
             (ignore-errors (bt:destroy-thread reader))))
       (curlcl:curl-error (condition)
+        (when (write-failure-cause-p condition)
+          (report-write-failure-and-quit))
         (unless (and (clingon:getopt command :silent)
                      (not (clingon:getopt command :show-error)))
           (message "~A" condition))
@@ -938,6 +945,8 @@ binary mode, where there is no such convention to appeal to."
                  do (let ((code (if (typep outcome 'curlcl:response)
                                     (report-response command outcome)
                                     (progn
+                                      (when (write-failure-cause-p outcome)
+                                        (report-write-failure-and-quit))
                                       (unless (clingon:getopt command :silent)
                                         (message "~A: ~A" url outcome))
                                       (exit-code-for outcome)))))
@@ -1163,6 +1172,27 @@ matching on the message, which is implementation wording."
        (let ((stream (stream-error-stream condition)))
          (and (streamp stream) (output-stream-p stream)))))
 
+(defun write-failure-cause-p (condition)
+  "True for a failure writing our output, whatever shape it arrives in.
+
+There are two, and which one you get is a matter of timing rather than of
+platform in principle -- though in practice Linux gives one and macOS the
+other.  When the buffer happens to fill mid-transfer the write(2) is made from
+inside libcurl's write callback, and the binding hands that back as a
+CALLBACK-ERROR carrying the original; when it does not, the failure waits for
+the flush and arrives as a plain STREAM-ERROR.  Same event either way."
+  (or (write-failure-p condition)
+      (and (typep condition 'curlcl:callback-error)
+           (write-failure-p (curlcl:callback-error-cause condition)))))
+
+(defun report-write-failure-and-quit ()
+  "Say what curl says for a closed pipe, and exit with curl's code for it."
+  (unless *quiet*
+    (message "Failure writing output to destination"))
+  ;; Not flushing on the way out: the stream that would be flushed is the
+  ;; broken one, and failing there lands straight back here.
+  (uiop:quit 56 nil))
+
 (defun flush-outputs ()
   "Push our buffered output out while a handler is still established.
 
@@ -1187,12 +1217,7 @@ the condition."
   `(handler-bind ((stream-error
                     (lambda (condition)
                       (when (write-failure-p condition)
-                        (unless *quiet*
-                          (message "Failure writing output to destination"))
-                        ;; Told not to flush on the way out: the stream it
-                        ;; would flush is the broken one, and failing there
-                        ;; lands straight back here.
-                        (uiop:quit 56 nil)))))
+                        (report-write-failure-and-quit)))))
      (unwind-protect (progn ,@body)
        (flush-outputs))))
 
