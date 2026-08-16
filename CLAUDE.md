@@ -190,6 +190,18 @@ package → conditions → library → types → varargs → easy-raw → memory
   backend and no websockets. The image-dump hook closes the library so the
   restore hook opens exactly one. Check with `curlcl -V`, which prints the path.
 
+- **A feature-gated path can be tested locally by pointing at the other
+  libcurl.** macOS has two, and they differ in what they support:
+  `LIBCURL_LIBRARY=/usr/lib/libcurl.4.dylib make test` runs the whole suite
+  against the system 8.7.1, which has no `ws://` — the same shape as Ubuntu's
+  8.5.0 in CI, down to the skip count. That is how to exercise the "built
+  without it" branch without waiting for CI. It has already caught one:
+  `websocket-url-p` asked libcurl's URL parser whether a scheme was a
+  websocket, and libcurl's parser *rejects* a scheme its build cannot speak,
+  so the check that decides whether to report "no websocket support" signalled
+  instead. Anything reached before a capability check must not itself need the
+  capability.
+
 - **Implementation-specific code is confined to three places**, and there is no
   `#-sbcl (error ...)` left: the bulk octet copy in `memory.lisp` (portable
   fallback), `fd-byte-stream` in `cli.lisp` (SBCL/ECL/CCL/CLISP clauses plus a

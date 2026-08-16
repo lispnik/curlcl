@@ -766,9 +766,19 @@ immediately -- when the server answers the close frame, so this is a bound
 rather than a delay that is actually waited out.")
 
 (defun websocket-url-p (url)
-  "True for the schemes that mean a websocket."
-  (let ((scheme (string-downcase (or (getf (curlcl:parse-url url) :scheme) ""))))
-    (or (string= scheme "ws") (string= scheme "wss"))))
+  "True for the schemes that mean a websocket.
+
+Read off the string rather than through PARSE-URL, which would be the obvious
+way and is wrong here: libcurl's parser rejects a scheme its own build does
+not support, so on a libcurl without websockets -- Ubuntu's 8.5.0, for one --
+asking whether this is a websocket URL signals UNSUPPORTED-SCHEME instead of
+answering.  And the answer is what decides whether to print the diagnostic
+saying websockets are missing, so the report could never be reached."
+  (let ((colon (position #\: url)))
+    (and colon
+         (let ((scheme (string-downcase (subseq url 0 colon))))
+           (or (string= scheme "ws") (string= scheme "wss")))
+         t)))
 
 (defstruct (stdin-queue (:conc-name queue-))
   "Chunks read from standard input, waiting to be sent."

@@ -505,11 +505,20 @@ differ for reasons that have nothing to do with what is being tested."
       (is (= 63 code)))))
 
 (test a-websocket-url-is-recognised-by-its-scheme
+  ;; Deliberately NOT wrapped in WITH-WEBSOCKETS-OR-SKIP.  Recognising the
+  ;; scheme has to work on a libcurl built without websockets -- that is
+  ;; precisely when the driver needs to say so -- and the first version asked
+  ;; libcurl's URL parser, which rejects a scheme its build does not support.
+  ;; It passed here and failed on Ubuntu's 8.5.0, signalling UNSUPPORTED-SCHEME
+  ;; from the very check that decides whether to print "built without
+  ;; websocket support".  Skipping this when websockets are missing would hide
+  ;; the one case it exists for.
   (is (curlcl/cli::websocket-url-p "ws://example.com/"))
   (is (curlcl/cli::websocket-url-p "wss://example.com/"))
   (is (curlcl/cli::websocket-url-p "WS://example.com/"))
   (is (not (curlcl/cli::websocket-url-p "http://example.com/")))
-  (is (not (curlcl/cli::websocket-url-p "https://example.com/ws"))))
+  (is (not (curlcl/cli::websocket-url-p "https://example.com/ws")))
+  (is (not (curlcl/cli::websocket-url-p "no-scheme-at-all"))))
 
 (defun run-with-input (arguments input)
   "Run curlcl with ARGUMENTS, feeding INPUT on standard input."
