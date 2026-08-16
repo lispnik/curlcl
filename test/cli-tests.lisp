@@ -202,6 +202,103 @@ gets it from the command line, so there is nothing to translate it for us."
       (is (search "body=a=1&b=2" output))
       (is (search "x-from: curlcl" (string-downcase output))))))
 
+(defmacro with-data-file ((path content) &body body)
+  "Write CONTENT to a temporary file and bind PATH to its namestring."
+  `(uiop:with-temporary-file (:pathname file :stream out :direction :output
+                              :element-type '(unsigned-byte 8))
+     (write-sequence (curlcl::coerce-to-octets ,content) out)
+     (finish-output out)
+     :close-stream
+     (let ((,path (uiop:native-namestring file)))
+       ,@body)))
+
+(defun echo-body-of (output)
+  "The body /echo reported, out of its whole reflection of the request.
+
+Only this line can be compared between two clients: /echo also echoes the
+request headers, and curl's User-Agent is not curlcl's, so whole outputs
+differ for reasons that have nothing to do with what is being tested."
+  (let* ((start (search "body=" output))
+         (end (and start (position #\Newline output :start (+ start 5)))))
+    (when start (subseq output (+ start 5) end))))
+
+(defun echoed-body (&rest arguments)
+  "Run curlcl with ARGUMENTS against /echo and return the body it reported."
+  (echo-body-of (run-program-capturing (native-namestring-of *curlcl-binary*)
+                                       (append (list "-s") arguments
+                                               (list (test-url "/echo"))))))
+
+(test -d-reads-a-file-and-strips-its-line-breaks
+  ;; curl's -d @file joins the lines; --data-binary is the form that does not.
+  ;; Before this, @file was not read at all -- the literal string "@/tmp/..."
+  ;; was posted, and the request succeeded with the wrong body.
+  (with-curlcl-or-skip
+    (with-data-file (path (format nil "one~%two~%"))
+      (is (string= "onetwo" (echoed-body "-d" (format nil "@~A" path)))))))
+
+(test --data-binary-reads-a-file-verbatim
+  (with-curlcl-or-skip
+    (with-data-file (path (format nil "one~%two~%"))
+      ;; The trailing newline is kept too, so /echo's own line ends up empty.
+      (is (string= "one" (echoed-body "--data-binary" (format nil "@~A" path)))))))
+
+(test --data-raw-does-not-treat-@-as-a-file
+  (with-curlcl-or-skip
+    (is (string= "@not-a-file" (echoed-body "--data-raw" "@not-a-file")))))
+
+(test --data-urlencode-form-encodes-the-content-only
+  ;; Form encoding, not plain percent-encoding: a space is + here.  The name
+  ;; is left alone -- it is already a key, and encoding it would change it.
+  (with-curlcl-or-skip
+    (is (string= "name=a+b%26c" (echoed-body "--data-urlencode" "name=a b&c")))
+    (is (string= "a+b%26c" (echoed-body "--data-urlencode" "=a b&c")))))
+
+(test -d-reads-standard-input-for-@-dash
+  (with-curlcl-or-skip
+    (multiple-value-bind (output error-output code)
+        (uiop:run-program (list (native-namestring-of *curlcl-binary*)
+                                "-s" "-d" "@-" (test-url "/echo"))
+                          :input (make-string-input-stream "from-stdin")
+                          :output :string :error-output :string
+                          :ignore-error-status t)
+      (declare (ignore error-output))
+      (is (= 0 code))
+      (is (search "body=from-stdin" output)))))
+
+(test the-data-flags-agree-with-curl-byte-for-byte
+  ;; The check that matters for these: asserting our own idea of the encoding
+  ;; is what let --data-urlencode ship %20 where curl sends +, and the test
+  ;; would have agreed with the bug.  Compare against the real thing instead.
+  (with-curlcl-or-skip
+    ;; By exit status, for the reason spelled out in
+    ;; THE-DRIVER-AGREES-WITH-CURL-WHERE-CURL-IS-AVAILABLE: RUN-PROGRAM with
+    ;; :OUTPUT NIL returns NIL even on success, so the obvious test skips
+    ;; unconditionally and the comparison never runs.
+    (if (eql 0 (nth-value 2 (uiop:run-program '("curl" "--version")
+                                              :output nil :error-output nil
+                                              :ignore-error-status t)))
+        (with-data-file (path (format nil "a b&c=d+e~%"))
+          (dolist (arguments (list (list "-d" "a=1" "-d" "b=2")
+                                   (list "-d" (format nil "@~A" path))
+                                   (list "--data-binary" (format nil "@~A" path))
+                                   (list "--data-raw" "@literal")
+                                   (list "--data-urlencode" "k=a b&c")
+                                   (list "--data-urlencode" "=a b~c/d")
+                                   (list "--data-urlencode" (format nil "@~A" path))
+                                   (list "--data-urlencode" (format nil "n@~A" path))))
+            (let ((ours (echo-body-of
+                         (run-program-capturing
+                          (native-namestring-of *curlcl-binary*)
+                          (append (list "-s") arguments (list (test-url "/echo"))))))
+                  (theirs (echo-body-of
+                           (run-program-capturing
+                            "curl"
+                            (append (list "-s") arguments (list (test-url "/echo")))))))
+              (is (string= ours theirs)
+                  "curlcl sent ~S where curl sent ~S, for ~{~A ~}"
+                  ours theirs arguments))))
+        (skip "curl is not installed"))))
+
 (test the-driver-runs-transfers-in-parallel
   ;; Timed against the sequential run rather than a fixed threshold.  A wall
   ;; clock bound has to be tight enough to prove overlap and loose enough to

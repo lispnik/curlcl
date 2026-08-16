@@ -201,12 +201,131 @@ Accepts curl's forms: name=value, name=@path, and a ;type= suffix on either."
             (list* :name name :data value
                    (when content-type (list :content-type content-type))))))))
 
+(defun data-file-octets (path)
+  "Read PATH as octets, or standard input when PATH is \"-\".
+
+Octets rather than a string because --data-binary exists precisely to send a
+file that is not text, and decoding one as UTF-8 to re-encode it would corrupt
+exactly the case the flag is for."
+  (if (string= path "-")
+      (let ((stream (binary-stdin))
+            (buffer (make-array 65536 :element-type '(unsigned-byte 8)))
+            (out (make-array 0 :element-type '(unsigned-byte 8)
+                               :adjustable t :fill-pointer 0)))
+        (loop for n = (read-sequence buffer stream)
+              while (plusp n)
+              do (dotimes (i n) (vector-push-extend (aref buffer i) out)))
+        (coerce out '(simple-array (unsigned-byte 8) (*))))
+      (with-open-file (in path :element-type '(unsigned-byte 8))
+        (let* ((octets (make-array (file-length in)
+                                   :element-type '(unsigned-byte 8)))
+               (n (read-sequence octets in)))
+          ;; READ-SEQUENCE may stop short of FILE-LENGTH, so trust its count.
+          (subseq octets 0 n)))))
+
+(defun strip-line-breaks (octets)
+  "Remove CR and LF.  This is what curl's -d does to file content, and what
+--data-binary deliberately does not."
+  (remove-if (lambda (byte) (or (= byte 10) (= byte 13))) octets))
+
+(defun data-argument-octets (argument &key file strip)
+  "The bytes one data argument contributes.
+
+FILE enables curl's @path convention, and @- for standard input; --data-raw is
+the form that does not have it, so a body may begin with a literal @.  STRIP
+removes line breaks from file content, which -d does and --data-binary does
+not."
+  (if (and file (plusp (length argument)) (char= (char argument 0) #\@))
+      (let ((octets (data-file-octets (subseq argument 1))))
+        (if strip (strip-line-breaks octets) octets))
+      (curlcl::coerce-to-octets argument)))
+
+(defun form-urlencode (string)
+  "Encode STRING the way --data-urlencode does.
+
+libcurl's own encoder does the escaping, so the edge cases agree with curl
+rather than with our reading of RFC 3986 -- except for one, which it cannot
+do: this is application/x-www-form-urlencoded, where a space is `+' and not
+`%20'.  Rewriting the escaper's %20 afterwards is exact rather than a
+heuristic, because a literal %20 in the input has already become %2520 by the
+time we look."
+  (let ((escaped (curlcl:with-easy (handle)
+                   (curlcl:url-escape handle string))))
+    (with-output-to-string (out)
+      (loop with i = 0
+            while (< i (length escaped))
+            do (if (and (<= (+ i 3) (length escaped))
+                        (string= "%20" escaped :start2 i :end2 (+ i 3)))
+                   (progn (write-char #\+ out) (incf i 3))
+                   (progn (write-char (char escaped i) out) (incf i)))))))
+
+(defun data-urlencode-octets (argument)
+  "One --data-urlencode argument, in curl's five forms:
+
+  content        the whole argument, encoded
+  =content       likewise, the leading = only marking it as nameless
+  name=content   name kept literal, content encoded
+  @file          the file's content, encoded
+  name@file      name kept literal, the file's content encoded
+
+Only the content is encoded; curl leaves the name alone, which matters because
+a name is already a valid key and encoding it would change it."
+  (let ((equals (position #\= argument))
+        (at (position #\@ argument)))
+    (flet ((pair (name content)
+             (curlcl::coerce-to-octets
+              (if (plusp (length name))
+                  (format nil "~A=~A" name (form-urlencode content))
+                  (form-urlencode content)))))
+      (cond
+        ;; @ wins when it comes first, so name@file is a file and not a name
+        ;; whose content happens to contain an @.
+        ((and at (or (null equals) (< at equals)))
+         (pair (subseq argument 0 at)
+               (curlcl::octets-to-string
+                (data-file-octets (subseq argument (1+ at))))))
+        (equals (pair (subseq argument 0 equals) (subseq argument (1+ equals))))
+        (t (pair "" argument))))))
+
+(defun join-octets (pieces separator)
+  "Concatenate PIECES with a one-byte SEPARATOR between them."
+  (let* ((total (+ (reduce #'+ pieces :key #'length)
+                   (max 0 (1- (length pieces)))))
+         (out (make-array total :element-type '(unsigned-byte 8)))
+         (at 0))
+    (loop for piece in pieces
+          for first = t then nil
+          do (unless first
+               (setf (aref out at) separator)
+               (incf at))
+             (replace out piece :start1 at)
+             (incf at (length piece)))
+    out))
+
 (defun collect-data (command)
-  "Join every -d and --data-binary argument with & as curl does."
-  (let ((pieces (append (clingon:getopt command :data)
-                        (clingon:getopt command :data-binary))))
+  "Every data argument, joined with & as curl does.
+
+Returns octets, not a string: --data-binary can carry a file that is not text.
+
+One difference from curl, and it is in the joining rather than the reading:
+curl concatenates these in command-line order, while clingon collects each
+option into a list of its own, so the four flags are concatenated in a fixed
+order here.  It shows only when the flags are interleaved -- `-d a
+--data-binary b -d c' -- and the server cares which piece came first."
+  (let ((pieces (append
+                 (mapcar (lambda (argument)
+                           (data-argument-octets argument :file t :strip t))
+                         (clingon:getopt command :data))
+                 (mapcar (lambda (argument)
+                           (data-argument-octets argument :file t :strip nil))
+                         (clingon:getopt command :data-binary))
+                 (mapcar (lambda (argument)
+                           (data-argument-octets argument :file nil))
+                         (clingon:getopt command :data-raw))
+                 (mapcar #'data-urlencode-octets
+                         (clingon:getopt command :data-urlencode)))))
     (when pieces
-      (format nil "~{~A~^&~}" pieces))))
+      (join-octets pieces (char-code #\&)))))
 
 (defun request-method (command data forms upload)
   "Work out the method the way curl does, unless -X overrides it."
@@ -449,9 +568,11 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
   (handler-case
       (with-output (sink command url index)
         (let* ((options (request-options command))
-               (effective-url (if (and (clingon:getopt command :get)
-                                       (collect-data command))
-                                  (append-query url (collect-data command))
+               ;; -G moves the body into the query string, which is text, so
+               ;; this is the one place the octets have to become a string.
+               (query (and (clingon:getopt command :get) (collect-data command)))
+               (effective-url (if query
+                                  (append-query url (curlcl::octets-to-string query))
                                   url))
                (progress (progress-reporter command)))
           (multiple-value-bind (on-header on-data) (make-sinks command sink)
@@ -574,6 +695,12 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
                         :description "HTTP POST data" :key :data)
    (clingon:make-option :list :long-name "data-binary"
                         :description "HTTP POST binary data" :key :data-binary)
+   (clingon:make-option :list :long-name "data-raw"
+                        :description "HTTP POST data, '@' allowed"
+                        :key :data-raw)
+   (clingon:make-option :list :long-name "data-urlencode"
+                        :description "HTTP POST data URL encoded"
+                        :key :data-urlencode)
    (clingon:make-option :list :short-name #\F :long-name "form"
                         :description "specify multipart form data" :key :form)
    (clingon:make-option :flag :short-name #\G :long-name "get"
@@ -639,7 +766,7 @@ non-HTTP URLs.  Watching the status line covers all of those the same way."
                         :key :write-out)
    (clingon:make-option :flag :long-name "compressed"
                         :description "request compressed response" :key :compressed)
-   (clingon:make-option :flag :long-name "progress-bar"
+   (clingon:make-option :flag :short-name #\# :long-name "progress-bar"
                         :description "display transfer progress as a bar"
                         :key :progress-bar)
    (clingon:make-option :integer :long-name "retry"

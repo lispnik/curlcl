@@ -235,9 +235,8 @@ real client needs rather than what is convenient to expose. `-Z` goes through
 `request-many`, `--retry` through the scheduled backoff, `-F` through
 `curl_mime_*`, `-w` through `getinfo`.
 
-Two deliberate differences, both in `--help`: there is no progress meter unless
-`--progress-bar` is given, and `--upload-file` reads the file into memorycB
-rather than streaming it.
+One deliberate difference, noted in `--help`: there is no progress meter unless
+`--progress-bar` (or `-#`) is given.
 
 `curlcl -V` also reports **which** libcurl it loaded, which curl has no need to
 do — this binding can load any of several, and on macOS they differ in version,
