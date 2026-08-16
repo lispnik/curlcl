@@ -47,7 +47,9 @@ jobs:
           - target: macos-arm64
             runner: macos-latest
           - target: macos-x86_64
-            runner: macos-13
+            # macos-15-intel, not macos-13: the macOS 13 images are retired, so
+            # a job asking for them sits queued forever rather than failing.
+            runner: macos-15-intel
 
     steps:
       - uses: actions/checkout@v5
