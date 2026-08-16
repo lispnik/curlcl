@@ -402,6 +402,44 @@ differ for reasons that have nothing to do with what is being tested."
     ;; No --retry at all means no policy, not a policy of one attempt.
     (is (null (policy)))))
 
+(test the-version-banner-names-what-libcurl-was-built-with
+  ;; The banner used to stop at the TLS backend, though curl_version_info
+  ;; carries zlib, brotli, zstd, libssh2, nghttp2 and the QUIC pair as well,
+  ;; and curl prints them all.
+  (let* ((banner (with-output-to-string (out) (curlcl/cli::print-curl-version out)))
+         (first-line (subseq banner 0 (position #\Newline banner))))
+    (is (search (format nil "libcurl/~A" (curlcl:libcurl-version)) first-line))
+    (is (search "Library: " banner))
+    (is (search "Protocols: " banner))
+    (is (search "Features: " banner))
+    ;; Whatever this libcurl reports is on the line, spelled as curl spells it.
+    (let ((info (curlcl:libcurl-version-info)))
+      (dolist (component (curlcl/cli::version-components info))
+        (is (search component first-line)
+            "~S is missing from the banner" component))
+      ;; zlib and nghttp2 come back as bare numbers and need the name adding;
+      ;; the others already carry theirs and must not be prefixed twice.
+      (let ((zlib (curlcl::version-info-libz-version info)))
+        (when zlib
+          (is (search (format nil "zlib/~A" zlib) first-line))
+          (is (not (search "zlib/zlib/" first-line)))))
+      (let ((brotli (curlcl::version-info-brotli-version info)))
+        (when brotli (is (not (search "brotli/brotli/" first-line))))))))
+
+(test --version-says-what--V-says
+  ;; curl makes them one option.  Ours printed clingon's "curlcl version
+  ;; 0.1.4" for --version and the full banner for -V, because clingon answers
+  ;; --version itself from inside FINALIZE-COMMAND, before the handler runs.
+  (with-curlcl-or-skip
+    (let ((short (run-program-capturing (native-namestring-of *curlcl-binary*)
+                                        (list "-V")))
+          (long (run-program-capturing (native-namestring-of *curlcl-binary*)
+                                       (list "--version"))))
+      (is (string= short long)
+          "-V and --version should print the same thing, as curl's do")
+      (is (search "libcurl/" long)
+          "--version should be the banner, not a bare version string"))))
+
 (test the-help-explains-what-a-range-looks-like
   ;; "-r, --range <RANGE>" says nothing about the syntax, and neither does
   ;; curl's line -- there are five forms and one of them, a leading dash

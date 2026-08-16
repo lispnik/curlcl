@@ -1059,24 +1059,61 @@ binary mode, where there is no such convention to appeal to."
 
 ;;; The command ---------------------------------------------------------------
 
-(defun print-curl-version ()
+(defun version-components (info)
+  "The libraries libcurl was built against, named as curl names them.
+
+curl_version_info hands some of these back already carrying their own name --
+\"brotli/1.2.0\", \"libssh2/1.11.1\", \"ngtcp2/1.25.0 nghttp3/1.18.0\" -- and
+others as a bare number, so zlib and nghttp2 get a prefix here and the rest
+must not.  The order is curl's own.
+
+Anything libcurl was built without is NULL and drops out, which is why this
+line is longer on some builds than others.  Four of the fields
+CURL_VERSION_INFO carries are never here: cainfo and capath are the CA
+locations compiled in, and Homebrew's curl is configured --without-ca-bundle
+--with-ca-fallback so it has none; gsasl and rtmp need libraries almost
+nobody builds against."
+  (remove nil
+          (list (curlcl::version-info-ssl-version info)
+                (let ((zlib (curlcl::version-info-libz-version info)))
+                  (when zlib (format nil "zlib/~A" zlib)))
+                (curlcl::version-info-brotli-version info)
+                (curlcl::version-info-zstd-version info)
+                (curlcl::version-info-libssh-version info)
+                (let ((nghttp2 (curlcl::version-info-nghttp2-version info)))
+                  (when nghttp2 (format nil "nghttp2/~A" nghttp2)))
+                (curlcl::version-info-quic-version info))))
+
+(defun print-curl-version (&optional (stream *standard-output*))
   "Print a version banner in curl -V's shape."
-  (format t "~A ~A (~A) libcurl/~A~@[ ~A~]~%"
-          *program-name* *program-version*
-          (or (curlcl::version-info-host (curlcl:libcurl-version-info)) "unknown")
-          (curlcl:libcurl-version)
-          (curlcl::version-info-ssl-version (curlcl:libcurl-version-info)))
-  (format t "Release-Date: ~A~%" "unreleased")
-  ;; Not something curl reports, but this binding can load any of several
-  ;; libcurls -- and on macOS the one in the dyld shared cache differs from
-  ;; Homebrew's in version, TLS backend and protocol support -- so saying which
-  ;; one is in use turns a confusing class of bug into an obvious one.
-  (format t "Library: ~A~%" (curlcl:libcurl-pathname))
-  (format t "Protocols: ~{~A~^ ~}~%" (curlcl:libcurl-protocols))
-  (format t "Features: ~{~A~^ ~}~%"
-          (sort (mapcar #'string-downcase
-                        (mapcar #'symbol-name (curlcl:libcurl-features)))
-                #'string<)))
+  (let ((info (curlcl:libcurl-version-info)))
+    (format stream "~A ~A (~A) libcurl/~A~{ ~A~}~%"
+            *program-name* *program-version*
+            (or (curlcl::version-info-host info) "unknown")
+            (curlcl:libcurl-version)
+            (version-components info))
+    (format stream "Release-Date: ~A~%" "unreleased")
+    ;; Not something curl reports, but this binding can load any of several
+    ;; libcurls -- and on macOS the one in the dyld shared cache differs from
+    ;; Homebrew's in version, TLS backend and protocol support -- so saying
+    ;; which one is in use turns a confusing class of bug into an obvious one.
+    (format stream "Library: ~A~%" (curlcl:libcurl-pathname))
+    (format stream "Protocols: ~{~A~^ ~}~%" (curlcl:libcurl-protocols))
+    ;; feature_names when libcurl offers it: the bitmask ran out of room, so
+    ;; a new-enough libcurl reports names the bits cannot express, and that
+    ;; list is what `curl --version' itself prints.
+    (let ((names (curlcl::version-info-feature-names info)))
+      (format stream "Features: ~{~A~^ ~}~%"
+              (sort (copy-list
+                     (or names
+                         (mapcar #'string-downcase
+                                 (mapcar #'symbol-name (curlcl:libcurl-features)))))
+                    ;; STRING-LESSP, not STRING<: the names are mixed case and
+                    ;; curl orders them without regard to it, so a
+                    ;; case-sensitive sort puts every capitalised one first and
+                    ;; the two lists stop matching despite holding the same
+                    ;; features.
+                    #'string-lessp)))))
 
 (defun options ()
   (list
@@ -1403,8 +1440,23 @@ the condition."
               do (when (plusp code) (setf worst code))
               finally (return worst)))))))
 
+(defclass curl-command (clingon:command)
+  ()
+  (:documentation
+   "A command whose --version says what curl's does.
+
+clingon answers --version itself, from inside FINALIZE-COMMAND and before the
+handler ever runs, so there is no intercepting it further in; and its own
+option cannot simply be replaced, since ENSURE-UNIQUE-OPTIONS refuses a second
+--version.  Specialising PRINT-VERSION on a subclass is the way in.  curl
+makes -V and --version the same option, and ours printed \"curlcl version
+0.1.4\" for one and the full banner for the other."))
+
+(defmethod clingon:print-version ((command curl-command) stream &key)
+  (print-curl-version stream))
+
 (defun command ()
-  (clingon:make-command
+  (make-instance 'curl-command
    :name *program-name*
    :description "transfer a URL, in the manner of curl(1)"
    :long-description
