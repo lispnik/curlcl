@@ -399,7 +399,11 @@ jobs:
           Gatekeeper will want `xattr -d com.apple.quarantine curlcl` after
           downloading.
           NOTES
+          # --repo because this job never checks the source out -- it only
+          # downloads artifacts -- so gh has no git repository to infer the
+          # target from and fails with "not a git repository".
           gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
             --title "curlcl $version" \
             --notes-file notes.md \
             artifacts/*
