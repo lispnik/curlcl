@@ -426,6 +426,28 @@ differ for reasons that have nothing to do with what is being tested."
       (let ((brotli (curlcl::version-info-brotli-version info)))
         (when brotli (is (not (search "brotli/brotli/" first-line))))))))
 
+(test the-banner-reports-what-curl-has-no-way-to-say
+  ;; curl links one libcurl and has nothing to tell you about it.  This
+  ;; binding opens whichever it finds, so which library, of what vintage, and
+  ;; trusting what, are live questions -- and four fields of
+  ;; curl_version_info answer them without appearing in curl's own output.
+  (let* ((info (curlcl:libcurl-version-info))
+         (banner (with-output-to-string (out) (curlcl/cli::print-curl-version out))))
+    (is (search (format nil "Library: ~A" (curlcl:libcurl-pathname)) banner))
+    ;; The packed form, as C spells it, so it can be pasted into a comparison.
+    (is (search (format nil "Version-Number: 0x~6,'0X" (curlcl:libcurl-version-number))
+                banner))
+    (is (search (format nil "Info-Age: ~D" (curlcl::version-info-age info)) banner))
+    ;; NULL here is not an absence to hide: it says the build has no CA
+    ;; location of its own and defers to the TLS backend, which is the whole
+    ;; answer to "where is this checking certificates against".
+    (let ((cainfo (curlcl::version-info-cainfo info)))
+      (if cainfo
+          (is (search (format nil "CA-Bundle: ~A" cainfo) banner))
+          (is (search "CA-Bundle: none built in" banner))))
+    ;; And curl's own lines are still there and still first.
+    (is (< (search "libcurl/" banner) (search "Library: " banner)))))
+
 (test --version-says-what--V-says
   ;; curl makes them one option.  Ours printed clingon's "curlcl version
   ;; 0.1.4" for --version and the full banner for -V, because clingon answers

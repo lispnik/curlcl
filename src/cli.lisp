@@ -1093,11 +1093,37 @@ nobody builds against."
             (curlcl:libcurl-version)
             (version-components info))
     (format stream "Release-Date: ~A~%" "unreleased")
-    ;; Not something curl reports, but this binding can load any of several
-    ;; libcurls -- and on macOS the one in the dyld shared cache differs from
-    ;; Homebrew's in version, TLS backend and protocol support -- so saying
-    ;; which one is in use turns a confusing class of bug into an obvious one.
+    ;; From here to Protocols is more than curl says, and deliberately.  curl
+    ;; is linked against one libcurl and has nothing to tell you about it;
+    ;; this binding opens whichever one it finds, so the questions "which
+    ;; library, of what vintage, trusting what" are live ones here and are
+    ;; answered where somebody will look.
+    ;;
+    ;; On macOS the one in the dyld shared cache differs from Homebrew's in
+    ;; version, TLS backend and protocol support, which is exactly the
+    ;; confusing class of bug this turns into an obvious one.
     (format stream "Library: ~A~%" (curlcl:libcurl-pathname))
+    ;; The packed 0xMMNNPP form, which is what a version comparison actually
+    ;; wants -- 0x081500 orders correctly where "8.21.0" invites a string
+    ;; compare that puts 8.9 above it.
+    ;; 0x rather than Lisp's #x: this is read by people who know it from
+    ;; curl's own documentation of CURLVERSION_NOW, and pasted into C.
+    (format stream "Version-Number: 0x~6,'0X~%" (curlcl:libcurl-version-number))
+    ;; Which generation of curl_version_info this build fills in.  It explains
+    ;; absences rather than leaving them mysterious: a field introduced above
+    ;; this age is not missing from the build, it is missing from the struct.
+    (format stream "Info-Age: ~D~%" (curlcl::version-info-age info))
+    ;; The CA locations compiled into libcurl, which curl never prints and
+    ;; which decide what a certificate is checked against.  NULL is not an
+    ;; error and is worth saying out loud: Homebrew's curl is built
+    ;; --without-ca-bundle --with-ca-fallback, so it has none of its own and
+    ;; leaves it to the TLS backend, while macOS's own libcurl names
+    ;; /etc/ssl/cert.pem.
+    (let ((cainfo (curlcl::version-info-cainfo info))
+          (capath (curlcl::version-info-capath info)))
+      (format stream "CA-Bundle: ~A~%"
+              (or cainfo "none built in; the TLS backend's own default is used"))
+      (when capath (format stream "CA-Path: ~A~%" capath)))
     (format stream "Protocols: ~{~A~^ ~}~%" (curlcl:libcurl-protocols))
     ;; feature_names when libcurl offers it: the bitmask ran out of room, so
     ;; a new-enough libcurl reports names the bits cannot express, and that
