@@ -57,6 +57,14 @@ Needs libcurl and `cffi-libffi`. On macOS the binding prefers Homebrew's
 libcurl over the one in the dyld shared cache, because the system build has no
 websocket support; set `LIBCURL_LIBRARY` to pin a specific one.
 
+**libcurl 7.83 or newer.** The client reads response headers through
+`curl_easy_header`/`curl_easy_nextheader`, which arrived in 7.83, and unlike
+the other version-gated functions those are declared rather than resolved at
+load time — so an older libcurl loads and reports its version quite happily and
+then fails on the first transfer with "the alien function
+`curl_easy_nextheader` is undefined". Ubuntu 22.04's 7.81 is the one still in
+the wild worth naming.
+
 Just the `curlcl` command, with no Lisp toolchain — on macOS, which also pulls
 in a libcurl that can speak `ws://`:
 

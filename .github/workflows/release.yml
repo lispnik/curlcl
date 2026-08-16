@@ -196,7 +196,17 @@ jobs:
           else
             # A container with libcurl and nothing else: no SBCL, no -dev
             # packages, no libzstd unless we brought it.
-            docker run --rm -v "$PWD/$stage:/curlcl:ro" ubuntu:22.04 bash -c '
+            #
+            # 24.04 rather than 22.04, and the difference is not incidental.
+            # 22.04 carries libcurl 7.81, which predates curl_easy_nextheader
+            # (7.83) -- the header API the client uses on every response.  The
+            # binary starts there and dies on the first transfer with "the
+            # alien function curl_easy_nextheader is undefined", because that
+            # one is declared rather than resolved at load time the way the
+            # other version-gated functions are.  So 7.83 is curlcl's real
+            # floor, this checks the packaging against a libcurl above it, and
+            # the floor is stated in the README.
+            docker run --rm -v "$PWD/$stage:/curlcl:ro" ubuntu:24.04 bash -c '
               apt-get update -qq >/dev/null && apt-get install -y -qq libcurl4 >/dev/null
               /curlcl/curlcl -V
               /curlcl/curlcl -s -o /dev/null -w "smoke %{http_code}\n" https://example.com/
@@ -300,11 +310,15 @@ jobs:
           cp README.md LICENSE "$stage/"
           for start in bin/curlcl.exe /mingw64/bin/libcurl-4.dll /mingw64/bin/libffi-8.dll; do
             [ -e "$start" ] || continue
+            # The seed itself as well as what it pulls in.  Listing only the
+            # dependencies is the obvious mistake and leaves out libffi-8.dll
+            # and libcurl-4.dll themselves -- the two the binding dlopens by
+            # name, so nothing links them and nothing else drags them in.
+            case "$start" in /mingw64/bin/*) echo "$start" ;; esac
             ldd "$start" | awk '{print $3}' | grep -i '/mingw64/bin/' || true
           done | sort -u | while read -r dll; do
             [ -f "$dll" ] && cp -n "$dll" "$stage/"
           done
-          cp /mingw64/bin/libcurl-4.dll "$stage/" 2>/dev/null || true
           ls "$stage"
 
       # With MSYS2 off PATH this is the environment a downloader has.  If a DLL
