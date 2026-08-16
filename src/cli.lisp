@@ -26,7 +26,7 @@
 (in-package #:curlcl/cli)
 
 (defparameter *program-name* "curlcl")
-(defparameter *program-version* "0.1.3")
+(defparameter *program-version* "0.1.4")
 
 (defvar *quiet* nil
   "True when -s was given without -S.
