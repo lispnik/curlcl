@@ -54,6 +54,7 @@
           background: var(--panel); border-radius: 4px; padding: .8rem 1rem;
           margin: 1.5rem 0; font-size: .95rem; }
   .single { max-width: 100%; }
+  h3.sub { margin: 2rem 0 .4rem; font-size: 1.05rem; letter-spacing: -.01em; }
   footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--rule);
            color: var(--dim); font-size: .9rem; }
   table { border-collapse: collapse; margin: 1rem 0; font-size: .93rem; }
@@ -303,6 +304,45 @@ curl_share_cleanup(share);</code></pre></div>
                   (curl:getinfo handle :response-code))))</code></pre></div>
   </div>
   <p class="out">two transfers over one share return <b>(200 200)</b>, the second reusing the first's connection</p>
+
+  <h3 class="sub">A share, or a session?</h3>
+  <p>These are the same idea at two levels, and the page shows both, so: <b>a
+  session contains a share.</b> <tt>make-session</tt> creates one and adds what
+  libcurl has no concept of — a pool of easy handles, defaults merged into
+  every request, and a teardown that closes the handles before releasing the
+  share, because <tt>curl_share_cleanup</tt> answers <tt>CURLSHE_IN_USE</tt> if
+  shared state is pulled out from under a live handle.</p>
+
+  <table>
+    <tr><th></th><th>share</th><th>session</th></tr>
+    <tr><th>What it pools</th>
+        <td>DNS, TLS sessions, connections, cookies — whichever you name</td>
+        <td>the same, defaulting to all four, <em>plus the handles themselves</em></td></tr>
+    <tr><th>Handles</th>
+        <td>yours to create, configure and close</td>
+        <td>pooled and reused; <tt>:max-idle</tt> kept, default 8</td></tr>
+    <tr><th>Use it when</th>
+        <td>you drive easy handles yourself, or want a narrower set — DNS only, no cookies</td>
+        <td>you use the client layer and want reuse and cookies across a run of requests</td></tr>
+  </table>
+
+  <p>They are not exclusive: <tt>session-share</tt> hands back the share the
+  session built, so a raw handle can join the very state the client layer is
+  using.</p>
+  <div class="pair single">
+    <div class="col"><h3>Lisp</h3><pre><code>(curl:with-session (session)
+  (let ((share (curl:session-share session)))
+    (curl:with-easy (handle)
+      (curl:attach-share handle share)          ; a raw handle joins the pool
+      (curl:setopts handle :url "https://example.com/")
+      (curl:perform handle)
+      (list :the-sessions-share (type-of share)
+            :raw-handle (curl:getinfo handle :response-code)
+            :client-request (curl:response-status
+                             (curl:http-get "https://example.com/"
+                                            :session session))))))</code></pre></div>
+  </div>
+  <p class="out">returns <b>(:THE-SESSIONS-SHARE CURLCL:SHARE-HANDLE :RAW-HANDLE 200 :CLIENT-REQUEST 200)</b></p>
 </section>
 
 <section>
@@ -386,6 +426,9 @@ if (code != CURLE_OK) {
   the library adds over the binding. A non-2xx status is a response, not a
   condition — only transport failures signal, because only then is there
   nothing to return.</p>
+  <p><tt>with-session</tt> below is the share from
+  <a href="#share">§7</a> with a handle pool around it — see
+  <a href="#share">A share, or a session?</a> for which to reach for.</p>
   <div class="pair single">
     <div class="col"><h3>Lisp</h3><pre><code>;; One request.  The body is decoded when the Content-Type says it is
 ;; text and names a charset we know; otherwise it arrives as octets.

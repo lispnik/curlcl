@@ -161,6 +161,27 @@
           (curl:response-status (curl:http-get "https://example.com/"
                                                :session session)))))
 
+;;; 7b. A session is a share plus a pool ---------------------------------------
+;;;
+;;; The layering, made visible: the session builds a share, and SESSION-SHARE
+;;; hands it back, so a raw easy handle can join the same pooled state that the
+;;; client layer is using.
+
+(example session-and-share
+  (curl:with-session (session)
+    (let ((share (curl:session-share session)))
+      (curl:with-easy (handle)
+        (curl:attach-share handle share)
+        (setf (curl:callback-function handle :write)
+              (lambda (octets) (declare (ignore octets)) t))
+        (curl:setopts handle :url "https://example.com/")
+        (curl:perform handle)
+        (list :the-sessions-share (type-of share)
+              :raw-handle (curl:getinfo handle :response-code)
+              :client-request (curl:response-status
+                               (curl:http-get "https://example.com/"
+                                              :session session)))))))
+
 ;;; Running them ---------------------------------------------------------------
 
 (defun run-all ()
