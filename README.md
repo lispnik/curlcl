@@ -298,8 +298,8 @@ make test
 Integration tests run against an HTTP server started inside the image on an
 ephemeral loopback port, so the suite is hermetic and can serve responses no
 public endpoint will produce on demand — a truncated body, a redirect loop, a
-slow trickle, a route that fails exactly twice. There is a websocket echo
-server too.
+slow trickle, a route that fails exactly as many times as it is asked to.
+There is a websocket echo server too.
 
 ```
 CURL_LIVE_TESTS=1 make test
@@ -365,12 +365,16 @@ argument goes on the stack, Linux is where it goes in a register, and Windows
 is where `curl_socket_t` is eight bytes wide.
 
 The library itself is close to portable: the only implementation-specific code
-is a bulk octet copy in `memory.lisp`, which has a portable fallback, and it
-loads and performs real HTTPS requests on ECL. The full suite does not yet pass
-there — it gets through fifteen suites and stalls in the sixteenth, apparently
-because the in-process test server spawns a thread per keep-alive connection
-and never reaps them — so ECL is **not** in CI and should be treated
-as unverified rather than supported.
+in the library proper is a bulk octet copy in `memory.lisp`, which has a
+portable fallback.
+
+ECL was made to load the system and perform real HTTPS requests at one point,
+and the suite was seen to stall partway through, apparently because the
+in-process test server spawns a thread per keep-alive connection and never
+reaps them. Treat that as hearsay: nothing in CI covers ECL, the last attempt
+to reproduce it did not get as far as loading the system, and the build has
+changed since — `cffi-libffi` is no longer a dependency. ECL is **unverified**,
+not supported.
 
 `bin/curlcl` needs a byte stream on standard input and output, which the
 standard has no way to ask for. There are clauses for SBCL, ECL, CCL and CLISP,
@@ -381,9 +385,12 @@ academic.
 
 ### Windows
 
-Supported on SBCL, in CI, with the same suite: 1207 checks pass, 16 skip. The
-skips are the websocket tests, because the libcurl the runner picks up is built
-without `ws://`.
+Supported on SBCL, in CI, running the same suite as the Unix jobs, green. A
+number of tests skip there rather than run: most are the opt-in network suite,
+the rest are the websocket tests — the libcurl the runner picks up is built
+without `ws://` — and one needs a Unix shell. No count is given here on
+purpose; it changes with every commit, and the badge above is the claim that
+keeps itself true.
 
 Four things had to be true for this to work, and three of them were broken when
 it was first tried:

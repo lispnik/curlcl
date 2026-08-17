@@ -87,6 +87,15 @@ package → conditions → library → types → varargs → easy-raw → memory
   accept `&optional` in an alien signature would otherwise mis-pass every
   option in silence.
 
+- **Do not write a number into prose that a commit can change.** The README
+  said Windows ran "1207 checks, 16 skip"; it was 1419 and 20, and the sentence
+  had been wrong for months because nothing recomputes it. It also said the
+  skips *were* the websocket tests when fewer than half of them were. Counts of
+  tests, checks and skips belong in CI output, where they are regenerated;
+  prose gets "green", and the badge carries the claim. Numbers tied to
+  something fixed are fine and have held up — "79 of the 100 `curl_*` symbols"
+  still checks out exactly against `nm`.
+
 - **For anything with a wire format curl already defines, diff against curl.**
   `curlcl` is a curl workalike, so "what should this send?" has an authority,
   and it is not our reading of the RFC. `--data-urlencode` shipped `%20` where
@@ -229,10 +238,13 @@ package → conditions → library → types → varargs → easy-raw → memory
   the way a C program would, so this arrives as a condition rather than a
   signal — `curlcl url | head` printed `#<SB-SYS:FD-STREAM …>` at the user.
 
-- **Implementation-specific code is confined to three places**, and there is no
+- **Implementation-specific code is confined to three files**, and there is no
   `#-sbcl (error ...)` left: the bulk octet copy in `memory.lisp` (portable
-  fallback), `fd-byte-stream` in `cli.lisp` (SBCL/ECL/CCL/CLISP clauses plus a
-  /dev/fd fallback), and `force-gc` in the tests. ECL loads the library and
+  fallback), `standard-descriptor` and `fd-byte-stream` in `cli.lisp` (the
+  latter with SBCL/ECL/CCL/CLISP clauses plus a /dev/fd fallback), and
+  `force-gc` in the tests.  Platform conditionals are a separate thing and are
+  not counted here: `library.lisp` picks its libcurl search list per platform,
+  and one test asserts the Darwin arm64 calling convention specifically. ECL loads the library and
   performs requests, but the full suite stalls partway, so it is not in CI.
 
 - **A retry re-delivers the whole body, so the sink has to be replayable.**
