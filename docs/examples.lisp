@@ -138,6 +138,42 @@
       (list :code (curl:curl-error-code condition)
             :name (curl:curl-error-code-name condition)))))
 
+;;; 10b. Restarts and warnings -------------------------------------------------
+;;;
+;;; Both halves of each are shown, because the interesting part is the contrast:
+;;; what happens with no handler, and what a handler can decide instead.
+
+(example choosing-at-the-point-of-refusal
+  ;; Retrying onto :ON-DATA is refused, because a retry would deliver part of
+  ;; the body twice.  The restart says "do it anyway" without going back and
+  ;; changing the call.  example.com succeeds first time, so nothing is
+  ;; actually delivered twice here -- the restart is what lets the request run
+  ;; at all.
+  (flet ((discard (octets) (declare (ignore octets))))
+    (list :refused
+          (handler-case
+              (curl:http-get "https://example.com/" :on-data #'discard :retry 3)
+            (curl:unsafe-retry (condition) (curl:unsafe-retry-sink condition)))
+          :allowed
+          (handler-bind ((curl:unsafe-retry #'continue))
+            (curl:response-status
+             (curl:http-get "https://example.com/" :on-data #'discard :retry 3))))))
+
+(example handling-a-deprecation-warning
+  ;; Signalled the first time a deprecated option is set, and carrying what it
+  ;; knows rather than only a string to match on.
+  (let ((seen '()))
+    (handler-bind ((curl:deprecated-option
+                     (lambda (condition)
+                       (push (list (curl:deprecated-option-name condition)
+                                   (curl:deprecated-option-since condition)
+                                   (curl:deprecated-option-replacement condition))
+                             seen)
+                       (muffle-warning condition))))
+      (curl:with-easy (handle)
+        (curl:setopts handle :put t)))
+    seen))
+
 ;;; 11. The client layer -------------------------------------------------------
 
 (example the-client-layer

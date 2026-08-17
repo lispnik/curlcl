@@ -53,7 +53,10 @@
   .note { border: 1px solid var(--rule); border-left: 3px solid var(--accent);
           background: var(--panel); border-radius: 4px; padding: .8rem 1rem;
           margin: 1.5rem 0; font-size: .95rem; }
-  .single { max-width: 100%; }
+  /* A section with no C column is one column, not the left half of two --
+     without the override it inherits .pair's 1fr 1fr and the code sits in a
+     box half the page wide, silently scrolled off at the right. */
+  .pair.single { grid-template-columns: 1fr; }
   h3.sub { margin: 2rem 0 .4rem; font-size: 1.05rem; letter-spacing: -.01em; }
   footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--rule);
            color: var(--dim); font-size: .9rem; }
@@ -417,6 +420,54 @@ if (code != CURLE_OK) {
           :name (curl:curl-error-code-name condition))))</code></pre></div>
   </div>
   <p class="out">returns <b>(:CODE 6 :NAME :COULDNT-RESOLVE-HOST)</b></p>
+
+  <h3 class="sub">Deciding at the point of failure</h3>
+  <p>A condition is only half of what the condition system offers. Where the
+  library would otherwise have to guess on your behalf, it signals and
+  establishes a restart, so the choice is made where the information is —
+  by a handler, rather than by going back and calling differently.</p>
+  <p>Retrying a body that goes to <tt>:on-data</tt> is the case worth showing.
+  A retry delivers the body from the beginning, so the consumer would see
+  whatever the failed attempt managed to hand over and then the whole of the
+  successful one. Rather than corrupt the stream quietly or refuse outright,
+  the library refuses <em>and offers</em> <tt>continue</tt>.</p>
+  <div class="pair single">
+    <div class="col"><h3>Lisp</h3><pre><code>(flet ((discard (octets) (declare (ignore octets))))
+  (list
+   ;; Refused by default: the consumer would see part of the body twice.
+   :refused
+   (handler-case
+       (curl:http-get "https://example.com/" :on-data #'discard :retry 3)
+     (curl:unsafe-retry (condition)
+       (curl:unsafe-retry-sink condition)))
+
+   ;; Or say, at the point of refusal, that repeated delivery is acceptable.
+   :allowed
+   (handler-bind ((curl:unsafe-retry #'continue))
+     (curl:response-status
+      (curl:http-get "https://example.com/" :on-data #'discard :retry 3)))))</code></pre></div>
+  </div>
+  <p class="out">returns <b>(:REFUSED :ON-DATA :ALLOWED 200)</b></p>
+
+  <h3 class="sub">Warnings you can act on</h3>
+  <p>Setting an option libcurl has deprecated warns once per option, with a
+  condition rather than a bare string — so it can be muffled, logged, or made
+  fatal for a test run, and what it knows is readable off it instead of being
+  formatted away.</p>
+  <div class="pair single">
+    <div class="col"><h3>Lisp</h3><pre><code>(let ((seen '()))
+  (handler-bind ((curl:deprecated-option
+                   (lambda (condition)
+                     (push (list (curl:deprecated-option-name condition)
+                                 (curl:deprecated-option-since condition)
+                                 (curl:deprecated-option-replacement condition))
+                           seen)
+                     (muffle-warning condition))))
+    (curl:with-easy (handle)
+      (curl:setopts handle :put t)))
+  seen)</code></pre></div>
+  </div>
+  <p class="out">returns <b>((:PUT "7.12.1" "Use CURLOPT_UPLOAD"))</b></p>
 </section>
 
 <section>
@@ -428,7 +479,10 @@ if (code != CURLE_OK) {
   nothing to return.</p>
   <p><tt>with-session</tt> below is the share from
   <a href="#share">§7</a> with a handle pool around it — see
-  <a href="#share">A share, or a session?</a> for which to reach for.</p>
+  <a href="#share">A share, or a session?</a> for which to reach for. Retry and
+  streaming interact, and not always the way you want:
+  <a href="#errors">Deciding at the point of failure</a> is what that looks
+  like.</p>
   <div class="pair single">
     <div class="col"><h3>Lisp</h3><pre><code>;; One request.  The body is decoded when the Content-Type says it is
 ;; text and names a charset we know; otherwise it arrives as octets.
