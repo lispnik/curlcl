@@ -447,3 +447,79 @@
       (is (= (+ before 3) (curlcl::live-callback-count)))
       (close-handle handle))
     (is (= before (curlcl::live-callback-count)))))
+
+;;; Deprecated options ---------------------------------------------------------
+;;;
+;;; :PUT is the subject throughout because nothing else in the library or the
+;;; suite sets it -- the other :PUT occurrences are the HTTP method, which is a
+;;; different namespace.  An option the client layer used would make the latch
+;;; below depend on test order.
+
+(defmacro with-deprecation-unlatched ((option) &body body)
+  "Run BODY with OPTION's once-per-image deprecation latch clear.
+
+The latch is global and lasts for the life of the image, so a test that did not
+clear it would pass or fail according to what ran before it -- and, worse, would
+go on passing after the warning stopped working, because a latched option is
+silent for the right-looking reason."
+  (alexandria:with-gensyms (entry)
+    `(let ((,entry (curlcl::find-option ,option)))
+       (setf (curlcl::option-warned ,entry) nil)
+       (unwind-protect (progn ,@body)
+         (setf (curlcl::option-warned ,entry) nil)))))
+
+(test setting-a-deprecated-option-signals-a-condition-a-caller-can-act-on
+  ;; The point of the class: a caller can dispatch on it and read what it knows,
+  ;; rather than matching on the text of a SIMPLE-WARNING.
+  (with-deprecation-unlatched (:put)
+    (let ((caught nil))
+      (handler-bind ((deprecated-option (lambda (c) (setf caught c) (muffle-warning c))))
+        (with-easy (handle) (setopt handle :put t)))
+      (is (typep caught 'deprecated-option))
+      (is (eq :put (deprecated-option-name caught)))
+      (is (string= "7.12.1" (deprecated-option-since caught)))
+      (is (search "CURLOPT_UPLOAD" (deprecated-option-replacement caught)))
+      ;; A warning, not an error: setting a deprecated option still works.
+      (is-true (typep caught 'warning))
+      (is-false (typep caught 'error))
+      (is (plusp (length (princ-to-string caught)))))))
+
+(test the-deprecation-warning-is-muffled-only-when-asked
+  ;; Both halves, because the muffled half alone would also pass if the warning
+  ;; had simply stopped being signalled.
+  (with-deprecation-unlatched (:put)
+    (let ((noise (with-output-to-string (*error-output*)
+                   (with-easy (handle) (setopt handle :put t)))))
+      (is (search "deprecated" noise))))
+  (with-deprecation-unlatched (:put)
+    (let ((noise (with-output-to-string (*error-output*)
+                   (handler-bind ((deprecated-option #'muffle-warning))
+                     (with-easy (handle) (setopt handle :put t))))))
+      (is (zerop (length noise))))))
+
+(test the-deprecation-warning-is-signalled-once-per-option
+  ;; Deliberate: the option is deprecated once, not once per call, and a loop
+  ;; setting it would otherwise bury everything else.
+  (with-deprecation-unlatched (:put)
+    (let ((count 0))
+      (handler-bind ((deprecated-option (lambda (c) (incf count) (muffle-warning c))))
+        (with-easy (handle)
+          (setopt handle :put t)
+          (setopt handle :put t))
+        ;; A fresh handle does not reset it either -- the latch is on the option.
+        (with-easy (handle) (setopt handle :put t)))
+      (is (= 1 count)))))
+
+(test setting-ordinary-options-warns-about-nothing
+  ;; Includes opening the handle, which installs the error buffer and callbacks
+  ;; through %SET-OPTION -- among them deprecated ones.  That path must stay
+  ;; silent: the caller never named those options and cannot do anything about
+  ;; them.
+  (let ((warnings '()))
+    (handler-bind ((warning (lambda (c) (push (princ-to-string c) warnings)
+                              (muffle-warning c))))
+      (with-easy (handle)
+        (setopts handle :url "http://example.invalid/"
+                        :followlocation t
+                        :timeout 5)))
+    (is (null warnings) "expected no warnings, got: ~{~A~^; ~}" warnings)))

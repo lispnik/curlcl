@@ -920,6 +920,56 @@ reporting progress" (- latest earliest))))))
           "the failed attempt's body should still have been delivered")
       (is (search "succeeded on attempt 2" delivered)))))
 
+(test an-ordinary-request-warns-about-nothing
+  ;; SETOPT warns about deprecated options and the client layer reaches libcurl
+  ;; through SETOPT, so this is the whole of what stands between that and a
+  ;; warning on every request.  Not hypothetical: the option table is generated
+  ;; from libcurl's headers, so an option configured here can become deprecated
+  ;; without a line of this file changing, and regenerating the table is when
+  ;; that would land.
+  (let ((warnings '()))
+    (handler-bind ((warning (lambda (c)
+                              (push (princ-to-string c) warnings)
+                              (muffle-warning c))))
+      (is (= 200 (response-status
+                  (http-get (test-url "/ok")
+                            :headers '(("X-Test" . "1"))
+                            :follow-redirects t
+                            :timeout 5)))))
+    (is (null warnings) "expected no warnings, got: ~{~A~^; ~}" warnings)))
+
+(test the-continue-restart-is-the-same-decision-taken-later
+  ;; The restart and :RETRY-STREAMED T must mean exactly the same thing, so this
+  ;; asserts the same two facts as the test above: the retry happens, and the
+  ;; consumer sees both bodies.  A restart that quietly declined to retry would
+  ;; pass a test that only checked the call returned.
+  (reset-flaky "retry-restart")
+  (let ((chunks '()))
+    (let ((response
+            (handler-bind ((unsafe-retry #'continue))
+              (http-get (test-url "/flaky?id=retry-restart&fail=1")
+                        :on-data (lambda (octets) (push (body-string octets) chunks))
+                        :retry '(:max-attempts 3 :initial-delay 0.01)))))
+      (is (= 200 (response-status response))))
+    (let ((delivered (apply #'concatenate 'string (reverse chunks))))
+      (is (search "failing" delivered))
+      (is (search "succeeded on attempt 2" delivered)
+          "the restart should have let the retry proceed, not abandoned it"))))
+
+(test the-restart-is-offered-and-not-taken-by-default
+  ;; Establishing a restart must not be the same as invoking one: with no
+  ;; handler the refusal stands, which is what the four tests around this rely
+  ;; on.  FIND-RESTART is checked from inside the handler because that is the
+  ;; only place the restart is established.
+  (let ((found nil))
+    (signals unsafe-retry
+      (handler-bind ((unsafe-retry (lambda (c)
+                                     (setf found (and (find-restart 'continue c) t)))))
+        (http-get (test-url "/ok")
+                  :on-data (lambda (octets) (declare (ignore octets)))
+                  :retry 3)))
+    (is-true found "a CONTINUE restart should be established for the condition")))
+
 (test the-batch-checks-every-request-before-starting-any
   ;; One unreplayable request fails the whole call rather than corrupting its
   ;; own destination partway through, and the good requests alongside it are

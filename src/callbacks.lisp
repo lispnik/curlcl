@@ -142,7 +142,16 @@ one."
   "Run BODY, converting any serious condition into FAILURE.
 
 FAILURE is evaluated only on the error path, and is whatever value libcurl
-documents as \"abort\" for this particular callback."
+documents as \"abort\" for this particular callback.
+
+HANDLER-CASE rather than HANDLER-BIND, and deliberately so: the handler must
+run after the stack has unwound to here, never on top of the C frame that
+called in.  For the same reason nothing in a callback body may offer a restart
+to code outside PERFORM, however natural the place for one looks -- invoking it
+would transfer control out through libcurl, which is undefined.  A condition
+raised here is stashed and re-signalled from PERFORM once curl_easy_perform has
+returned, and that is the only point at which it is safe to hand a caller any
+choice about it."
   (alexandria:once-only (state)
     `(handler-case (progn ,@body)
        (serious-condition (condition)

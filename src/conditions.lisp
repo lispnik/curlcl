@@ -211,6 +211,55 @@ supplied, or handed to :ON-DATA, it is not -- and the result is a corrupt file
 or a consumer that sees part of the body twice.
 
 Rather than pick one of those silently, the combination is refused.  Three
-things resolve it: give :OUTPUT a pathname, so this library owns the file and
-truncates it for each attempt; drop the retry; or pass :RETRY-STREAMED T to say
-the repeated delivery is acceptable."))
+things resolve it up front: give :OUTPUT a pathname, so this library owns the
+file and truncates it for each attempt; drop the retry; or pass
+:RETRY-STREAMED T to say the repeated delivery is acceptable.  A CONTINUE
+restart says that last thing after the fact, which is what a handler wants:
+
+  (handler-bind ((unsafe-retry #'continue))
+    (http-get url :on-data #'process :retry 3))"))
+
+;;; The only condition here that is not an error, and the reason CURL-CONDITION
+;;; is rooted at CONDITION rather than at ERROR.
+
+(defgeneric deprecated-option-name (condition)
+  (:documentation "The option that is deprecated, as a keyword."))
+
+(defgeneric deprecated-option-since (condition)
+  (:documentation
+   "The libcurl version that deprecated the option, as a string such as
+\"7.56.0\".  It is when libcurl said so, not when this binding noticed."))
+
+(defgeneric deprecated-option-replacement (condition)
+  (:documentation
+   "libcurl's advice on what to use instead, as a string, or NIL when it offers
+none.  Phrased as libcurl phrases it, in terms of the C name -- \"Use
+CURLOPT_MIMEPOST\" -- since that is what its documentation is indexed by."))
+
+(define-condition deprecated-option (curl-condition warning)
+  ((name :initarg :name :reader deprecated-option-name
+         :documentation "The deprecated option's keyword.")
+   (since :initarg :since :reader deprecated-option-since
+          :documentation "The libcurl version that deprecated it.")
+   (replacement :initarg :replacement :initform nil
+                :reader deprecated-option-replacement
+                :documentation "What to use instead, or NIL."))
+  (:report (lambda (c s)
+             (format s "libcurl option ~S is deprecated as of ~A.~@[  ~A.~]"
+                     (deprecated-option-name c)
+                     (deprecated-option-since c)
+                     (deprecated-option-replacement c))))
+  (:documentation
+   "An option libcurl has deprecated was set.
+
+Signalled with WARN at the point of use rather than at load, because the table
+always holds every deprecated option and warning about their existence would be
+noise.  It is signalled at most once per option per image, so a handler sees
+each one the first time it is used and not afterwards.
+
+Being a class rather than a bare format string is what lets a caller act on it
+selectively -- muffle the ones it knows about, log the rest, or make the whole
+category fatal for a test run:
+
+  (handler-bind ((deprecated-option #'muffle-warning))
+    (setopts handle :put t))"))

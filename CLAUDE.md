@@ -147,6 +147,19 @@ package → conditions → library → types → varargs → easy-raw → memory
   A non-local exit out of a callback is still undefined; `handler-case` cannot
   intercept a `throw`, and nothing else can either.
 
+- **`setopt` warns about deprecated options; `%set-option` does not.** The
+  binding sets deprecated options itself — `CURLOPT_IOCTLFUNCTION` among them —
+  and warning about options the caller never named is noise, so the internal
+  entry point is silent and the public one is not. The split is load-bearing in
+  both directions and neither half is self-evident from its own file: the
+  warning sat written-but-never-called for as long as it existed, because the
+  comment in `%set-option` saying "SETOPT warns" described an intention nobody
+  had wired up. `setting-ordinary-options-warns-about-nothing` and
+  `an-ordinary-request-warns-about-nothing` are what now hold each side down —
+  the second matters because the client layer configures every request through
+  the *public* `setopt`, so an option it sets becoming deprecated (the table is
+  regenerated from libcurl's headers) would warn on every single request.
+
 - **"Never set" and "set to NULL" are different states in libcurl.** This bit
   three times. `CURLOPT_READDATA` set to NULL makes the built-in read callback
   `fread` a null `FILE*` and segfault. `CURLOPT_HEADERDATA` set with no header

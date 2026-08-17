@@ -125,14 +125,18 @@ for one the running libcurl lacks -- the report distinguishes them."
   "Warn the first time a deprecated option is used.
 
 Deliberately at use rather than at load: the table always contains every
-deprecated option, and warning about their mere existence would be noise."
+deprecated option, and warning about their mere existence would be noise.
+
+The latch is set before warning rather than after, so a handler that declines
+to return -- MUFFLE-WARNING, or one that turns the warning into an error --
+still leaves the option marked and cannot cause it to warn twice."
   (when (and (option-deprecated option)
              (not (option-warned option)))
     (setf (option-warned option) t)
-    (warn "libcurl option ~S is deprecated as of ~A.~@[  ~A.~]"
-          (option-keyword option)
-          (option-deprecated option)
-          (option-replacement option))))
+    (warn 'deprecated-option
+          :name (option-keyword option)
+          :since (option-deprecated option)
+          :replacement (option-replacement option))))
 
 (defun option-argument-class (option)
   "How OPTION's value crosses the ABI boundary: :LONG, :OFF-T or :POINTER.

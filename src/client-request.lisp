@@ -252,12 +252,25 @@ already gone."
 
 Checked once, before the first attempt, rather than discovered on the retry
 that corrupts the file.  A policy that will never retry is not a contradiction,
-so it passes whatever the sink is."
+so it passes whatever the sink is.
+
+The CONTINUE restart is the same decision as :RETRY-STREAMED T, taken at the
+point of refusal instead of in the argument list:
+
+  (handler-bind ((unsafe-retry #'continue))
+    (http-get url :on-data #'process :retry 3))
+
+Invoking it falls through to the ordinary return below, so there is no second
+path to keep in step with the first."
   (when (and policy (> (retry-max-attempts policy) 1)
              (not (plist-value options :retry-streamed nil))
              (not (replayable-sink-p (getf options :output)
                                      (getf options :on-data))))
-    (error 'unsafe-retry :sink (if (getf options :on-data) :on-data :output)))
+    (restart-case
+        (error 'unsafe-retry :sink (if (getf options :on-data) :on-data :output))
+      (continue ()
+        :report "Retry anyway, delivering part of the body more than once."
+        nil)))
   policy)
 
 (defun make-body-sink (handle output on-data)

@@ -253,6 +253,12 @@ Values are the obvious Lisp ones -- a string for a string option, T or NIL for
 a boolean, an integer for a number, a list of strings for a header list, octets
 or a string for a blob."
   (check-open handle)
+  ;; The counterpart to %SET-OPTION's silence: this is the entry point a caller
+  ;; names an option through, so this is where a deprecated one is worth
+  ;; mentioning.  The client layer reaches libcurl through here too, and that
+  ;; is deliberate -- if this library ever starts setting an option libcurl has
+  ;; deprecated, the warning is the thing that says so.
+  (warn-if-deprecated (ensure-option option))
   (case option
     ;; Routed to CURLOPT_COPYPOSTFIELDS so libcurl owns the copy; see the file
     ;; header.  The size must be set before the copy is made, and setting it

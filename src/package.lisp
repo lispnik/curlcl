@@ -56,6 +56,12 @@
    #:unsafe-retry
    #:unsafe-retry-sink
 
+   ;; The one warning, and the only condition here that is not an error.
+   #:deprecated-option
+   #:deprecated-option-name
+   #:deprecated-option-since
+   #:deprecated-option-replacement
+
    #:handle-closed
 
    ;; Error-code translation, exported because a caller handling an EASY-ERROR
