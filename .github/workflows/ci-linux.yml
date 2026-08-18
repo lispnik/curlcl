@@ -10,6 +10,15 @@
 # on the stack.  macOS is what proves the variadic path in src/varargs.lisp is
 # necessary at all; this job proves it did not break the case that would have
 # worked without it.
+#
+# Both architectures, because they are not the same test.  AAPCS64 passes a
+# variadic argument in registers like a named one; Apple's arm64 ABI departs
+# from it and puts them on the stack.  arm64-on-Linux is therefore what
+# separates "arm64" from "Darwin": a break on this leg *and* macOS is about
+# the instruction set, one on macOS alone is about Apple's calling convention.
+# Without it the two are confounded and a variadic bug here reads as a Linux
+# bug.  It is also the architecture the release workflow ships a linux-arm64
+# binary for, which until now was built and never tested.
 
 name: Linux
 
@@ -20,8 +29,18 @@ on:
 
 jobs:
   test:
-    name: sbcl · ubuntu-latest
-    runs-on: ubuntu-latest
+    name: sbcl · ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # Both legs run to completion: which architectures fail is the diagnosis
+      # above, and cancelling the survivor throws that away.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
 
     steps:
       - uses: actions/checkout@v5
@@ -83,7 +102,7 @@ jobs:
       - name: Upload the binary
         uses: actions/upload-artifact@v4
         with:
-          name: curlcl-linux-x86_64-${{ github.sha }}
+          name: curlcl-linux-${{ matrix.arch }}-${{ github.sha }}
           path: bin/curlcl
           if-no-files-found: error
           retention-days: 14

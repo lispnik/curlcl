@@ -364,6 +364,14 @@ broke. The three are not redundant either — macOS is where a variadic
 argument goes on the stack, Linux is where it goes in a register, and Windows
 is where `curl_socket_t` is eight bytes wide.
 
+Linux runs on both x86-64 and arm64, since those answer different questions.
+Apple's arm64 ABI is the one that puts variadic arguments on the stack;
+AAPCS64 keeps them in registers like named arguments. So the Linux arm64 leg
+is what tells an instruction-set problem apart from a Darwin calling-convention
+one — a failure on arm64 everywhere means the former, a failure on macOS alone
+means the latter. It also tests the architecture the release workflow has been
+shipping a `linux-arm64` binary for all along.
+
 The library itself is close to portable: the only implementation-specific code
 in the library proper is a bulk octet copy in `memory.lisp`, which has a
 portable fallback.
